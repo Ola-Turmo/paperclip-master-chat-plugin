@@ -50,8 +50,10 @@ export const DEFAULT_PLUGIN_TOOLS = [
 ] as const;
 
 export const DEFAULT_CONFIG = {
-  gatewayMode: "mock",
-  hermesBaseUrl: "http://127.0.0.1:8787",
+  gatewayMode: "auto",
+  hermesBaseUrl: "",
+  hermesCommand: "hermes",
+  hermesWorkingDirectory: "",
   defaultProfileId: "paperclip-master",
   defaultProvider: "openrouter",
   defaultModel: "anthropic/claude-sonnet-4",

@@ -1,10 +1,33 @@
 # Integration
 
-## Hermes adapter contract
+## Supported Hermes integration modes
 
-The plugin's production seam is an HTTP adapter service.
+### 1. Local CLI/runtime reuse (`gatewayMode=auto` or `gatewayMode=cli`)
 
-### Request
+This is the preferred path on a single VPS that already has Hermes installed.
+
+The worker shells out to the configured Hermes binary and passes:
+
+- the chosen Hermes profile (`-p <profile>`)
+- provider override (`--provider`)
+- model override (`-m`)
+- enabled toolsets (`-t`)
+- enabled skills (`-s`)
+- a normalized Paperclip-aware prompt assembled from thread scope and history
+
+Representative invocation:
+
+```bash
+hermes -p paperclip-master chat -Q --source tool   --provider openrouter   -m anthropic/claude-sonnet-4   -t web,file,paperclip-context   -s paperclip-search,issue-summarize   -q "<normalized Paperclip scope + history prompt>"
+```
+
+This mode reuses the **existing Hermes agent installation on the host** instead of requiring a separate adapter service.
+
+### 2. External HTTP adapter (`gatewayMode=http`)
+
+The plugin's alternative production seam is an HTTP adapter service.
+
+#### Request
 
 ```http
 POST /sessions/continue
@@ -69,7 +92,7 @@ Request body shape:
 }
 ```
 
-### Response
+#### Response
 
 ```json
 {
@@ -103,8 +126,25 @@ The external adapter service should:
 - The worker currently persists thread state through `ctx.state`.
 - UI calls use the built-in plugin bridge only.
 - The browser never needs Hermes secrets or direct provider access.
+- When the plugin runs on the same host as Hermes, `gatewayMode=auto` avoids standing up a second adapter process unless you want one.
 
-## Suggested deployment shape
+## Suggested deployment shapes
+
+### Same VPS reuse
+
+```mermaid
+sequenceDiagram
+  participant UI as Plugin UI
+  participant W as Plugin Worker
+  participant C as Local Hermes CLI/runtime
+
+  UI->>W: send-message
+  W->>C: hermes chat -Q ...
+  C-->>W: assistant text
+  W-->>UI: persisted thread + stream events
+```
+
+### External adapter boundary
 
 ```mermaid
 sequenceDiagram

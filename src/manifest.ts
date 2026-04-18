@@ -34,13 +34,23 @@ const manifest: PaperclipPluginManifestV1 = {
       gatewayMode: {
         type: "string",
         title: "Hermes gateway mode",
-        enum: ["mock", "http"],
+        enum: ["auto", "mock", "http", "cli"],
         default: DEFAULT_CONFIG.gatewayMode
       },
       hermesBaseUrl: {
         type: "string",
         title: "Hermes adapter base URL",
         default: DEFAULT_CONFIG.hermesBaseUrl
+      },
+      hermesCommand: {
+        type: "string",
+        title: "Local Hermes CLI command",
+        default: DEFAULT_CONFIG.hermesCommand
+      },
+      hermesWorkingDirectory: {
+        type: "string",
+        title: "Optional local Hermes working directory",
+        default: DEFAULT_CONFIG.hermesWorkingDirectory
       },
       defaultProfileId: {
         type: "string",

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import type {
   HermesRequest,
@@ -6,6 +7,7 @@ import type {
   HermesToolTrace,
   MasterChatPluginConfig,
 } from "../types.js";
+import { buildHermesCliInvocation } from "./cli.js";
 import { buildHermesGatewayPayload } from "./payload.js";
 
 export interface HermesGateway {
@@ -33,6 +35,49 @@ function summarizeScope(request: HermesRequest): string {
   if (issue) parts.push(`issue ${issue}`);
   if (agents) parts.push(`agents ${agents}`);
   return parts.join(", ");
+}
+
+function stripAnsi(input: string): string {
+  return input.replace(/\u001B\[[0-9;]*m/g, "").replace(/\r/g, "");
+}
+
+async function runCommand(command: string, args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("Hermes CLI timed out after 300s"));
+    }, 300_000);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`Hermes CLI exited with code ${code}: ${stderr || stdout}`));
+    });
+  });
 }
 
 export class MockHermesGateway implements HermesGateway {
@@ -88,8 +133,8 @@ export class MockHermesGateway implements HermesGateway {
       `Enabled skills: ${enabledSkills}.`,
       imageCount > 0
         ? `I received ${imageCount} inline image attachment${imageCount === 1 ? "" : "s"} and would route them as multimodal content blocks.`
-        : `No images were attached to this turn.`,
-      `Recommended next actions: compare agent perspectives, inspect linked activity/issues, and promote the best summary into a Paperclip issue or activity log if needed.`,
+        : "No images were attached to this turn.",
+      "Recommended next actions: compare agent perspectives, inspect linked activity/issues, and promote the best summary into a Paperclip issue or activity log if needed.",
     ].join(" ");
 
     emitTextDeltas(assistantText, onEvent);
@@ -153,8 +198,59 @@ export class HttpHermesGateway implements HermesGateway {
   }
 }
 
+export class CliHermesGateway implements HermesGateway {
+  constructor(private readonly config: MasterChatPluginConfig) {}
+
+  async sendMessage(
+    request: HermesRequest,
+    options?: { onEvent?: (event: HermesStreamEvent) => void },
+  ): Promise<HermesResponse> {
+    const invocation = buildHermesCliInvocation(request, this.config);
+
+    options?.onEvent?.({
+      type: "status",
+      stage: "started",
+      message: `Running local Hermes CLI via ${invocation.command}`,
+    });
+
+    const { stdout, stderr } = await runCommand(invocation.command, invocation.args, invocation.cwd);
+    const assistantText = stripAnsi(stdout).trim() || stripAnsi(stderr).trim();
+
+    if (!assistantText) {
+      throw new Error("Hermes CLI returned no assistant output");
+    }
+
+    emitTextDeltas(assistantText, options?.onEvent);
+    options?.onEvent?.({
+      type: "status",
+      stage: "completed",
+      message: "Hermes CLI response completed",
+    });
+
+    return {
+      assistantText,
+      toolTraces: [],
+      provider: request.session.provider,
+      model: request.session.model,
+      sessionId: request.session.sessionId ?? `cli-${request.metadata.threadId}`,
+    };
+  }
+}
+
 export function createHermesGateway(ctx: PluginContext, config: MasterChatPluginConfig): HermesGateway {
-  return config.gatewayMode === "http"
-    ? new HttpHermesGateway(ctx, config)
-    : new MockHermesGateway();
+  switch (config.gatewayMode) {
+    case "cli":
+      return new CliHermesGateway(config);
+    case "http":
+      return new HttpHermesGateway(ctx, config);
+    case "mock":
+      return new MockHermesGateway();
+    case "auto":
+    default:
+      return config.hermesCommand
+        ? new CliHermesGateway(config)
+        : config.hermesBaseUrl
+          ? new HttpHermesGateway(ctx, config)
+          : new MockHermesGateway();
+  }
 }

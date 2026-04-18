@@ -23,8 +23,9 @@ flowchart LR
   B --> W[Master Chat worker]
   W --> S[(Plugin state store)]
   W --> G[Hermes gateway interface]
-  G --> M[Mock gateway]
+  G --> C[Local Hermes CLI/runtime]
   G --> H[HTTP adapter service]
+  G --> M[Mock gateway]
 ```
 
 ## Core components
@@ -39,6 +40,7 @@ The worker owns:
 - activity/metrics emission
 - SSE stream events during turns
 - company-scoped persistence via plugin state
+- selection of the best Hermes gateway for the current environment
 
 ### 2. UI
 
@@ -57,8 +59,11 @@ Current Paperclip alpha supports plugin state, so this repo persists a company-s
 
 `src/hermes/gateway.ts` defines the boundary:
 
-- `MockHermesGateway` for local dev/tests
+- `CliHermesGateway` for reusing a host-local Hermes install on the same VPS
 - `HttpHermesGateway` for an external adapter service
+- `MockHermesGateway` for local dev/tests
+
+`gatewayMode=auto` prefers the local Hermes CLI/runtime first, which is the best fit when the plugin and Hermes run on the same machine.
 
 The worker never lets the browser talk directly to Hermes.
 
@@ -69,7 +74,7 @@ The worker never lets the browser talk directly to Hermes.
 3. Worker stores the user turn.
 4. Worker loads company/project/issue/agent context.
 5. Worker builds a normalized Hermes request.
-6. Gateway returns assistant text + tool trace metadata.
+6. Selected gateway returns assistant text + optional tool trace metadata.
 7. Worker persists assistant message parts and emits stream events.
 8. UI refreshes the thread and shows transcript/tool cards.
 
@@ -79,7 +84,8 @@ Because Paperclip does not currently ship a stable `ctx.assets` API, this repo u
 
 - browser reads file as a data URL
 - worker stores the attachment metadata with the message
-- Hermes payload builder strips the `data:` prefix and forwards base64 content blocks
+- HTTP gateway mode strips the `data:` prefix and forwards base64 content blocks
+- CLI gateway mode forwards image metadata in the prompt so the local Hermes agent still receives attachment context even when the CLI path is text-first
 
 This keeps the chat actually usable today while preserving a future migration path to Paperclip asset IDs.
 
@@ -88,4 +94,5 @@ This keeps the chat actually usable today while preserving a future migration pa
 - swap state-store persistence for a richer DB-backed repository if/when the host exposes it
 - swap inline image storage for Paperclip asset IDs
 - add richer tool negotiation through Paperclip plugin/tool registry endpoints
+- add a first-party Hermes adapter that preserves structured tool traces even in local-host mode
 - stream structured Hermes events instead of mock sentence chunks when the adapter exposes them

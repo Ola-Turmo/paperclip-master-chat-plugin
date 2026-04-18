@@ -1,5 +1,5 @@
 export type ChatMode = "single_agent" | "multi_agent" | "company_wide";
-export type HermesGatewayMode = "mock" | "http";
+export type HermesGatewayMode = "auto" | "mock" | "http" | "cli";
 
 export interface ThreadScope {
   companyId: string;
@@ -138,6 +138,8 @@ export interface ThreadSummary {
 export interface MasterChatPluginConfig {
   gatewayMode: HermesGatewayMode;
   hermesBaseUrl: string;
+  hermesCommand: string;
+  hermesWorkingDirectory?: string;
   defaultProfileId: string;
   defaultProvider: string;
   defaultModel: string;

@@ -6,8 +6,10 @@ The plugin uses manifest-based instance configuration.
 
 | Field | Type | Default | Purpose |
 |---|---|---:|---|
-| `gatewayMode` | `mock` \| `http` | `mock` | Selects whether the worker uses the built-in deterministic mock gateway or calls an external Hermes adapter service. |
-| `hermesBaseUrl` | string | `http://127.0.0.1:8787` | Base URL for the adapter service when `gatewayMode=http`. |
+| `gatewayMode` | `auto` \| `mock` \| `http` \| `cli` | `auto` | Chooses the Hermes integration path. `auto` prefers the existing local Hermes CLI on the host. |
+| `hermesBaseUrl` | string | `""` | Base URL for an external adapter service when `gatewayMode=http`. |
+| `hermesCommand` | string | `hermes` | Command or absolute path for the local Hermes CLI. |
+| `hermesWorkingDirectory` | string | `""` | Optional cwd for local Hermes execution, useful when reusing a checked-out Hermes repo on the VPS. |
 | `defaultProfileId` | string | `paperclip-master` | Default Hermes profile identifier. |
 | `defaultProvider` | string | `openrouter` | Default Hermes provider label. |
 | `defaultModel` | string | `anthropic/claude-sonnet-4` | Default Hermes model label. |
@@ -20,7 +22,18 @@ The plugin uses manifest-based instance configuration.
 
 ## Recommended environments
 
-### Local development
+### This VPS / host-local reuse
+
+```json
+{
+  "gatewayMode": "auto",
+  "hermesCommand": "hermes",
+  "hermesWorkingDirectory": "/root/hermes-agent",
+  "hermesBaseUrl": ""
+}
+```
+
+### Local development without a live Hermes runtime
 
 ```json
 {
@@ -41,8 +54,21 @@ The plugin uses manifest-based instance configuration.
 }
 ```
 
+### Force the local CLI explicitly
+
+```json
+{
+  "gatewayMode": "cli",
+  "hermesCommand": "/usr/local/bin/hermes",
+  "hermesWorkingDirectory": "/root/hermes-agent"
+}
+```
+
 ## Operational guidance
 
+- Use `gatewayMode=auto` when the plugin and Hermes run on the same trusted VPS.
+- Use `gatewayMode=http` when you want a dedicated adapter boundary or richer structured traces.
 - Keep `availablePluginTools` tightly allowlisted.
 - Prefer environment- or instance-specific routing in the adapter service rather than exposing provider secrets to the plugin UI.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
+- Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.

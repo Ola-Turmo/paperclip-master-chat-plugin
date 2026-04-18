@@ -28,9 +28,14 @@ import type {
 } from "./types.js";
 
 function normalizeConfig(config: Record<string, unknown> | null | undefined): MasterChatPluginConfig {
+  const gatewayMode = config?.gatewayMode;
   return {
-    gatewayMode: config?.gatewayMode === "http" ? "http" : DEFAULT_CONFIG.gatewayMode,
+    gatewayMode: gatewayMode === "http" || gatewayMode === "mock" || gatewayMode === "cli" || gatewayMode === "auto"
+      ? gatewayMode
+      : DEFAULT_CONFIG.gatewayMode,
     hermesBaseUrl: typeof config?.hermesBaseUrl === "string" ? config.hermesBaseUrl : DEFAULT_CONFIG.hermesBaseUrl,
+    hermesCommand: typeof config?.hermesCommand === "string" ? config.hermesCommand : DEFAULT_CONFIG.hermesCommand,
+    hermesWorkingDirectory: typeof config?.hermesWorkingDirectory === "string" ? config.hermesWorkingDirectory : DEFAULT_CONFIG.hermesWorkingDirectory,
     defaultProfileId: typeof config?.defaultProfileId === "string" ? config.defaultProfileId : DEFAULT_CONFIG.defaultProfileId,
     defaultProvider: typeof config?.defaultProvider === "string" ? config.defaultProvider : DEFAULT_CONFIG.defaultProvider,
     defaultModel: typeof config?.defaultModel === "string" ? config.defaultModel : DEFAULT_CONFIG.defaultModel,
