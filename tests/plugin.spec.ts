@@ -136,4 +136,88 @@ describe("master chat plugin", () => {
       text: "This should use the updated HTTP config.",
     })).rejects.toThrow(/hermesAuthToken/i);
   });
+
+  it("validates risky RFC1918 adapter configs and enforces a text length limit", async () => {
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
+    seedHarness(harness);
+
+    await plugin.definition.setup(harness.ctx);
+
+    const invalidConfig = await plugin.definition.onValidateConfig?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://192.168.1.12:8788",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: false,
+    });
+
+    expect(invalidConfig?.ok).toBe(false);
+    expect(invalidConfig?.errors?.some((entry) => /allowPrivateAdapterHosts/i.test(entry))).toBe(true);
+
+    harness.setConfig({
+      gatewayMode: "mock",
+      maxMessageChars: 12,
+    });
+    await plugin.definition.onConfigChanged?.({
+      gatewayMode: "mock",
+      maxMessageChars: 12,
+    });
+
+    await expect(harness.performAction("send-message", {
+      companyId: "comp_1",
+      requestId: "req_too_long",
+      text: "This message is definitely longer than twelve characters.",
+    })).rejects.toThrow(/12 character limit/i);
+  });
+
+  it("rejects invalid raw config values instead of silently coercing them", async () => {
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
+    seedHarness(harness);
+    await plugin.definition.setup(harness.ctx);
+
+    const invalidHeader = await plugin.definition.onValidateConfig?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://127.0.0.1:8788",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "   ",
+    });
+    expect(invalidHeader?.ok).toBe(false);
+    expect(invalidHeader?.errors?.some((entry) => /hermesAuthHeaderName/i.test(entry))).toBe(true);
+
+    const invalidMessageChars = await plugin.definition.onValidateConfig?.({
+      gatewayMode: "mock",
+      maxMessageChars: 0,
+    });
+    expect(invalidMessageChars?.ok).toBe(false);
+    expect(invalidMessageChars?.errors?.some((entry) => /maxMessageChars/i.test(entry))).toBe(true);
+  });
+
+  it("recomputes attachment size from the payload instead of trusting byteSize", async () => {
+    const harness = createTestHarness({
+      manifest,
+      config: {
+        gatewayMode: "mock",
+        maxAttachmentBytesPerFile: 16,
+      },
+    });
+    seedHarness(harness);
+    await plugin.definition.setup(harness.ctx);
+
+    const oversizedPayload = Buffer.from("x".repeat(64)).toString("base64");
+
+    await expect(harness.performAction("send-message", {
+      companyId: "comp_1",
+      requestId: "req_big_attachment",
+      text: "",
+      attachments: [{
+        id: "img_1",
+        type: "image",
+        name: "oversized.png",
+        mimeType: "image/png",
+        dataUrl: `data:image/png;base64,${oversizedPayload}`,
+        byteSize: 1,
+        source: "inline",
+      }],
+    })).rejects.toThrow(/per-file limit/i);
+  });
 });

@@ -62,6 +62,11 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Hermes adapter authentication header name",
         default: DEFAULT_CONFIG.hermesAuthHeaderName,
       },
+      allowPrivateAdapterHosts: {
+        type: "boolean",
+        title: "Allow direct fetch to RFC1918 adapter hosts",
+        default: DEFAULT_CONFIG.allowPrivateAdapterHosts,
+      },
       gatewayRequestTimeoutMs: {
         type: "number",
         title: "Gateway request timeout (ms)",
@@ -104,6 +109,11 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "number",
         title: "Maximum history messages forwarded to Hermes",
         default: DEFAULT_CONFIG.maxHistoryMessages,
+      },
+      maxMessageChars: {
+        type: "number",
+        title: "Maximum text characters accepted per turn",
+        default: DEFAULT_CONFIG.maxMessageChars,
       },
       allowInlineImageData: {
         type: "boolean",

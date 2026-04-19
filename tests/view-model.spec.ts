@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenTextParts, scopeSummary, summarizeMessage } from "../src/ui/view-model.js";
+import { appendStreamDelta, flattenTextParts, formatStreamStatus, scopeSummary, summarizeMessage } from "../src/ui/view-model.js";
 import type { ChatMessage } from "../src/types.js";
 
 describe("view-model helpers", () => {
@@ -34,5 +34,17 @@ describe("view-model helpers", () => {
 
     expect(flattenTextParts(message.parts)).toBe("First line\nSecond line");
     expect(summarizeMessage(message)).toBe("First line\nSecond line");
+  });
+
+  it("formats live stream events for the UI", () => {
+    expect(formatStreamStatus({
+      type: "status",
+      stage: "tool_call",
+      message: "Calling paperclip.dashboard",
+      toolName: "paperclip.dashboard",
+    })).toBe("tool_call: Calling paperclip.dashboard");
+
+    expect(appendStreamDelta("", { type: "delta", text: "First sentence." })).toBe("First sentence.");
+    expect(appendStreamDelta("First sentence.", { type: "delta", text: "Second sentence." })).toBe("First sentence.\nSecond sentence.");
   });
 });

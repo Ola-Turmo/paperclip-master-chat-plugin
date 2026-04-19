@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
@@ -22,6 +23,8 @@ export interface AdapterServiceConfig {
   authToken: string;
   authHeaderName: string;
   timeoutMs: number;
+  maxRequestBodyBytes: number;
+  maxClockSkewMs: number;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -43,6 +46,8 @@ export function loadAdapterServiceConfig(): AdapterServiceConfig {
     authToken: process.env.MASTER_CHAT_ADAPTER_TOKEN || "",
     authHeaderName: (process.env.MASTER_CHAT_ADAPTER_HEADER || "authorization").toLowerCase(),
     timeoutMs: envNumber("MASTER_CHAT_ADAPTER_TIMEOUT_MS", 45_000),
+    maxRequestBodyBytes: envNumber("MASTER_CHAT_ADAPTER_MAX_BODY_BYTES", 15_000_000),
+    maxClockSkewMs: envNumber("MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS", 300_000),
   };
 }
 
@@ -57,7 +62,72 @@ export function isAuthorized(headers: Record<string, string | string[] | undefin
   if (!config.authToken.trim()) return false;
   const raw = headers[config.authHeaderName];
   const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === getExpectedAuthValue(config);
+  if (typeof value !== "string") return false;
+  const actual = Buffer.from(value);
+  const expected = Buffer.from(getExpectedAuthValue(config));
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(actual, expected);
+}
+
+function createRequestSignature(
+  config: AdapterServiceConfig,
+  method: string,
+  path: string,
+  date: string,
+  nonce: string,
+  body: string,
+): string {
+  return createHmac("sha256", config.authToken)
+    .update([method.toUpperCase(), path, date, nonce, body].join("\n"))
+    .digest("hex");
+}
+
+function readHeader(headers: Record<string, string | string[] | undefined>, key: string): string | undefined {
+  const raw = headers[key];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+export function verifySignedRequest(
+  headers: Record<string, string | string[] | undefined>,
+  config: AdapterServiceConfig,
+  method: string,
+  path: string,
+  body: string,
+  seenNonces: Map<string, number>,
+  now = Date.now(),
+): { ok: boolean; error?: string } {
+  const date = readHeader(headers, "x-master-chat-date");
+  const nonce = readHeader(headers, "x-master-chat-nonce");
+  const signature = readHeader(headers, "x-master-chat-signature");
+
+  if (!date || !nonce || !signature) {
+    return { ok: false, error: "missing_signature_headers" };
+  }
+
+  const timestamp = Date.parse(date);
+  if (!Number.isFinite(timestamp) || Math.abs(now - timestamp) > config.maxClockSkewMs) {
+    return { ok: false, error: "stale_signature" };
+  }
+
+  const cutoff = now - config.maxClockSkewMs;
+  for (const [knownNonce, seenAt] of seenNonces.entries()) {
+    if (seenAt < cutoff) {
+      seenNonces.delete(knownNonce);
+    }
+  }
+
+  if (seenNonces.has(nonce)) {
+    return { ok: false, error: "replayed_signature" };
+  }
+
+  const expected = Buffer.from(createRequestSignature(config, method, path, date, nonce, body));
+  const actual = Buffer.from(signature);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return { ok: false, error: "invalid_signature" };
+  }
+
+  seenNonces.set(nonce, now);
+  return { ok: true };
 }
 
 export function parseSessionId(output: string): string | undefined {
@@ -258,13 +328,33 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
   };
 }
 
-async function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
+export async function readBodyLimited(
+  req: AsyncIterable<Buffer | string>,
+  maxBytes: number,
+): Promise<string> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > maxBytes) {
+      const error = new Error(`Request body exceeds ${maxBytes} bytes`);
+      error.name = "PayloadTooLargeError";
+      throw error;
+    }
+    chunks.push(buffer);
   }
-  if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (chunks.length === 0) return "";
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+export async function readJsonLimited(
+  req: AsyncIterable<Buffer | string>,
+  maxBytes: number,
+): Promise<unknown> {
+  const text = await readBodyLimited(req, maxBytes);
+  if (!text) return {};
+  return JSON.parse(text);
 }
 
 function sendJson(res: import("node:http").ServerResponse, status: number, payload: unknown) {
@@ -274,6 +364,7 @@ function sendJson(res: import("node:http").ServerResponse, status: number, paylo
 }
 
 export function createAdapterServer(config: AdapterServiceConfig) {
+  const seenNonces = new Map<string, number>();
   return createServer(async (req, res) => {
     try {
       if (!req.url) {
@@ -293,7 +384,13 @@ export function createAdapterServer(config: AdapterServiceConfig) {
           sendJson(res, 401, { error: "unauthorized" });
           return;
         }
-        const payload = await readJson(req) as HermesGatewayPayload;
+        const bodyText = await readBodyLimited(req, config.maxRequestBodyBytes);
+        const signature = verifySignedRequest(headers, config, req.method, url.pathname, bodyText, seenNonces);
+        if (!signature.ok) {
+          sendJson(res, 401, { error: signature.error });
+          return;
+        }
+        const payload = bodyText ? JSON.parse(bodyText) as HermesGatewayPayload : {} as HermesGatewayPayload;
         const response = await runHermesChat(config, payload);
         sendJson(res, 200, response);
         return;
@@ -301,6 +398,10 @@ export function createAdapterServer(config: AdapterServiceConfig) {
 
       sendJson(res, 404, { error: "not_found" });
     } catch (error) {
+      if (error instanceof Error && error.name === "PayloadTooLargeError") {
+        sendJson(res, 413, { error: error.message });
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       sendJson(res, 500, { error: message });
     }

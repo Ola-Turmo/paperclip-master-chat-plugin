@@ -191,6 +191,7 @@ export interface MasterChatPluginConfig {
   hermesWorkingDirectory?: string;
   hermesAuthToken: string;
   hermesAuthHeaderName: string;
+  allowPrivateAdapterHosts: boolean;
   gatewayRequestTimeoutMs: number;
   defaultProfileId: string;
   defaultProvider: string;
@@ -199,6 +200,7 @@ export interface MasterChatPluginConfig {
   defaultToolsets: string[];
   availablePluginTools: string[];
   maxHistoryMessages: number;
+  maxMessageChars: number;
   allowInlineImageData: boolean;
   maxAttachmentCount: number;
   maxAttachmentBytesPerFile: number;

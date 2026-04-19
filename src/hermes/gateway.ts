@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID, createHmac } from "node:crypto";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { configError, timeoutError, unavailableError, upstreamError } from "../errors.js";
 import type {
@@ -61,20 +62,54 @@ function authHeaderValue(config: MasterChatPluginConfig): string {
   return config.hermesAuthToken;
 }
 
-function isTrustedLocalAdapterUrl(rawUrl: string): boolean {
+function buildAdapterSignature(
+  config: MasterChatPluginConfig,
+  method: string,
+  path: string,
+  date: string,
+  nonce: string,
+  body: string,
+): string {
+  return createHmac("sha256", config.hermesAuthToken)
+    .update([method.toUpperCase(), path, date, nonce, body].join("\n"))
+    .digest("hex");
+}
+
+export function buildSignedAdapterHeaders(
+  config: MasterChatPluginConfig,
+  method: string,
+  path: string,
+  body: string,
+): Record<string, string> {
+  const date = new Date().toISOString();
+  const nonce = randomUUID();
+  return {
+    [config.hermesAuthHeaderName]: authHeaderValue(config),
+    "x-master-chat-date": date,
+    "x-master-chat-nonce": nonce,
+    "x-master-chat-signature": buildAdapterSignature(config, method, path, date, nonce, body),
+  };
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+}
+
+function isRfc1918Host(hostname: string): boolean {
+  if (/^10(?:\.\d{1,3}){3}$/u.test(hostname)) return true;
+  if (/^192\.168(?:\.\d{1,3}){2}$/u.test(hostname)) return true;
+  const match172 = hostname.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/u);
+  if (!match172) return false;
+  const octet = Number(match172[1]);
+  return octet >= 16 && octet <= 31;
+}
+
+export function shouldUseDirectAdapterFetch(rawUrl: string, config: MasterChatPluginConfig): boolean {
   try {
     const url = new URL(rawUrl);
     const hostname = url.hostname.toLowerCase();
-    if (hostname === "localhost" || hostname === "::1" || hostname === "[::1]") return true;
-    if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true;
-    if (/^10(?:\.\d{1,3}){3}$/.test(hostname)) return true;
-    if (/^192\.168(?:\.\d{1,3}){2}$/.test(hostname)) return true;
-    const match172 = hostname.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
-    if (match172) {
-      const octet = Number(match172[1]);
-      if (octet >= 16 && octet <= 31) return true;
-    }
-    return false;
+    if (isLoopbackHost(hostname)) return true;
+    return config.allowPrivateAdapterHosts && isRfc1918Host(hostname);
   } catch {
     return false;
   }
@@ -82,10 +117,11 @@ function isTrustedLocalAdapterUrl(rawUrl: string): boolean {
 
 async function performGatewayFetch(
   ctx: PluginContext,
+  config: MasterChatPluginConfig,
   url: string,
   init: RequestInit,
 ): Promise<Response> {
-  if (isTrustedLocalAdapterUrl(url)) {
+  if (shouldUseDirectAdapterFetch(url, config)) {
     return await fetch(url, init);
   }
   return await ctx.http.fetch(url, init);
@@ -145,7 +181,7 @@ async function probeHttpGateway(ctx: PluginContext, config: MasterChatPluginConf
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.min(config.gatewayRequestTimeoutMs, 5_000));
   try {
-    const response = await performGatewayFetch(ctx, `${config.hermesBaseUrl.replace(/\/$/, "")}/health`, {
+    const response = await performGatewayFetch(ctx, config, `${config.hermesBaseUrl.replace(/\/$/, "")}/health`, {
       method: "GET",
       headers: {
         [config.hermesAuthHeaderName]: authHeaderValue(config),
@@ -263,15 +299,17 @@ export class HttpHermesGateway implements HermesGateway {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.gatewayRequestTimeoutMs);
+    const path = "/sessions/continue";
+    const body = JSON.stringify(buildHermesGatewayPayload(request));
 
     try {
-      const response = await performGatewayFetch(this.ctx, `${this.config.hermesBaseUrl.replace(/\/$/, "")}/sessions/continue`, {
+      const response = await performGatewayFetch(this.ctx, this.config, `${this.config.hermesBaseUrl.replace(/\/$/, "")}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [this.config.hermesAuthHeaderName]: authHeaderValue(this.config),
+          ...buildSignedAdapterHeaders(this.config, "POST", path, body),
         },
-        body: JSON.stringify(buildHermesGatewayPayload(request)),
+        body,
         signal: controller.signal,
       });
 

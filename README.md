@@ -13,7 +13,7 @@ The plugin is intentionally aligned with Paperclip's current product boundary: P
   - a deterministic `mock` gateway for local development/tests
   - an `http` gateway mode for an external Hermes adapter service with required auth headers
   - a `cli` mode for explicitly shelling out to the local Hermes binary
-  - a bundled local adapter service (`dist/adapter-service.js`) for authenticated host-local HTTP mediation
+  - a bundled local adapter service (`dist/adapter-service.js`) for authenticated host-local HTTP mediation with constant-time auth checks and bounded request bodies
 - **Plugin-owned thread store** persisted via Paperclip plugin state, now versioned for migration safety
 - **Typed multimodal payload builder** that converts message history into Hermes-friendly content blocks
 - **Docs** for architecture, configuration, integration, security, VPS reuse, and the repo improvement roadmap
@@ -42,7 +42,8 @@ Paperclip's current plugin runtime does **not** expose a stable `ctx.assets` API
 - Company-scoped thread list and chat page
 - Project / issue / agent scope selection with scope validation against company-scoped records
 - Skill toggles and Hermes toolset policy alignment
-- Inline image previews plus attachment count/type/size enforcement
+- Inline image previews plus attachment count/type/size enforcement with server-side byte recomputation from the actual data URL
+- Message length enforcement with matching worker + UI validation
 - Retry-safe assistant continuation that does **not** duplicate the user turn
 - Live stream text/status rendering instead of raw JSON
 - Activity logging + metric emission on successful sends and typed error metrics on failures
@@ -96,6 +97,7 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `hermesWorkingDirectory`: optional cwd for the local Hermes checkout/runtime
 - `hermesBaseUrl`: base URL for an external Hermes adapter service when `gatewayMode=http`
 - `hermesAuthToken` / `hermesAuthHeaderName`: service auth for the adapter boundary
+- `allowPrivateAdapterHosts`: opt-in for direct fetch to RFC1918/private adapter URLs beyond loopback
 - `gatewayRequestTimeoutMs`
 - `defaultProfileId`
 - `defaultProvider`
@@ -104,6 +106,7 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `defaultToolsets` (safe default: `[`web`, `file`, `vision`]`)
 - `availablePluginTools`
 - `maxHistoryMessages`
+- `maxMessageChars`
 - `allowInlineImageData`
 - `maxAttachmentCount`
 - `maxAttachmentBytesPerFile`
@@ -136,6 +139,10 @@ POST {hermesBaseUrl}/sessions/continue
 ```
 
 HTTP mode now **fails closed** unless adapter auth is configured.
+
+Loopback adapter URLs such as `http://127.0.0.1:8788` use direct Node `fetch` automatically so same-VPS deployments can work even when Paperclip's guarded HTTP client blocks private ranges. Non-loopback RFC1918/private adapter hosts now require explicit `allowPrivateAdapterHosts=true`.
+
+The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`) and rejects oversized requests with `413`.
 
 ### Bundled local adapter service
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
-import { HttpHermesGateway, createHermesGateway } from "../src/hermes/gateway.js";
+import { HttpHermesGateway, buildSignedAdapterHeaders, createHermesGateway, shouldUseDirectAdapterFetch } from "../src/hermes/gateway.js";
 import manifest from "../src/manifest.js";
 
 describe("createHermesGateway", () => {
@@ -13,6 +13,7 @@ describe("createHermesGateway", () => {
       hermesWorkingDirectory: "",
       hermesAuthToken: "",
       hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: false,
       gatewayRequestTimeoutMs: 2_000,
       defaultProfileId: "paperclip-master",
       defaultProvider: "openrouter",
@@ -21,6 +22,7 @@ describe("createHermesGateway", () => {
       defaultToolsets: ["web"],
       availablePluginTools: ["paperclip.dashboard"],
       maxHistoryMessages: 24,
+      maxMessageChars: 12_000,
       allowInlineImageData: true,
       maxAttachmentCount: 4,
       maxAttachmentBytesPerFile: 5_000_000,
@@ -63,6 +65,7 @@ describe("createHermesGateway", () => {
         hermesWorkingDirectory: "",
         hermesAuthToken: "secret-token",
         hermesAuthHeaderName: "authorization",
+        allowPrivateAdapterHosts: false,
         gatewayRequestTimeoutMs: 2_000,
         defaultProfileId: "default",
         defaultProvider: "auto",
@@ -71,6 +74,7 @@ describe("createHermesGateway", () => {
         defaultToolsets: ["web"],
         availablePluginTools: ["paperclip.dashboard"],
         maxHistoryMessages: 24,
+        maxMessageChars: 12_000,
         allowInlineImageData: true,
         maxAttachmentCount: 4,
         maxAttachmentBytesPerFile: 5_000_000,
@@ -122,5 +126,122 @@ describe("createHermesGateway", () => {
       globalThis.fetch = originalFetch;
       harness.ctx.http.fetch = ctxFetch;
     }
+  });
+
+  it("does not bypass the guarded HTTP client for RFC1918 hosts unless explicitly allowed", () => {
+    expect(shouldUseDirectAdapterFetch("http://127.0.0.1:8788", {
+      gatewayMode: "http",
+      hermesBaseUrl: "http://127.0.0.1:8788",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: false,
+      gatewayRequestTimeoutMs: 2_000,
+      defaultProfileId: "default",
+      defaultProvider: "auto",
+      defaultModel: "MiniMax-M2.7",
+      defaultEnabledSkills: [],
+      defaultToolsets: ["web"],
+      availablePluginTools: [],
+      maxHistoryMessages: 24,
+      maxMessageChars: 12_000,
+      allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
+      enableActivityLogging: true,
+    })).toBe(true);
+
+    expect(shouldUseDirectAdapterFetch("http://192.168.1.12:8788", {
+      gatewayMode: "http",
+      hermesBaseUrl: "http://192.168.1.12:8788",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: false,
+      gatewayRequestTimeoutMs: 2_000,
+      defaultProfileId: "default",
+      defaultProvider: "auto",
+      defaultModel: "MiniMax-M2.7",
+      defaultEnabledSkills: [],
+      defaultToolsets: ["web"],
+      availablePluginTools: [],
+      maxHistoryMessages: 24,
+      maxMessageChars: 12_000,
+      allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
+      enableActivityLogging: true,
+    })).toBe(false);
+
+    expect(shouldUseDirectAdapterFetch("http://192.168.1.12:8788", {
+      gatewayMode: "http",
+      hermesBaseUrl: "http://192.168.1.12:8788",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: true,
+      gatewayRequestTimeoutMs: 2_000,
+      defaultProfileId: "default",
+      defaultProvider: "auto",
+      defaultModel: "MiniMax-M2.7",
+      defaultEnabledSkills: [],
+      defaultToolsets: ["web"],
+      availablePluginTools: [],
+      maxHistoryMessages: 24,
+      maxMessageChars: 12_000,
+      allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
+      enableActivityLogging: true,
+    })).toBe(true);
+  });
+
+  it("signs adapter requests with timestamp, nonce, and HMAC headers", () => {
+    const headers = buildSignedAdapterHeaders({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://127.0.0.1:8788",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+      allowPrivateAdapterHosts: false,
+      gatewayRequestTimeoutMs: 2_000,
+      defaultProfileId: "default",
+      defaultProvider: "auto",
+      defaultModel: "MiniMax-M2.7",
+      defaultEnabledSkills: [],
+      defaultToolsets: ["web"],
+      availablePluginTools: [],
+      maxHistoryMessages: 24,
+      maxMessageChars: 12_000,
+      allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
+      enableActivityLogging: true,
+    }, "POST", "/sessions/continue", "{\"ok\":true}");
+
+    expect(headers.authorization).toBe("Bearer secret-token");
+    expect(headers["x-master-chat-date"]).toBeTruthy();
+    expect(headers["x-master-chat-nonce"]).toBeTruthy();
+    expect(headers["x-master-chat-signature"]).toMatch(/^[a-f0-9]{64}$/u);
   });
 });

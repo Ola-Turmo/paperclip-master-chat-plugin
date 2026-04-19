@@ -170,7 +170,9 @@ The external adapter service should:
 4. Filter unsupported Hermes skills/toolsets against the host runtime before passing `-s/-t`.
 5. Return normalized text + tool traces.
 6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
-7. Support trusted loopback/private deployments explicitly. This repo now uses direct Node `fetch` for loopback/private adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks those ranges.
+7. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
+8. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
+8. Reject oversized JSON request bodies before parsing and enforce adapter auth in a side-channel-resistant way.
 
 ## Paperclip runtime considerations
 
@@ -179,6 +181,7 @@ The external adapter service should:
 - The browser never needs Hermes secrets or direct provider access.
 - Scope selectors are loaded paginated and now surface truncation warnings instead of silently hiding records.
 - Retry re-runs only the failed assistant continuation; it does not create a new user turn.
+- Worker config updates are validated before apply, so invalid adapter URLs or missing auth fail early instead of breaking the next live turn.
 
 ## Suggested deployment shapes
 

@@ -12,6 +12,7 @@ The plugin uses manifest-based instance configuration.
 | `hermesWorkingDirectory` | string | `""` | Optional cwd for local Hermes execution, useful when reusing a checked-out Hermes repo on the VPS. |
 | `hermesAuthToken` | string | `""` | Shared secret or bearer token for the Hermes HTTP adapter. Required for `gatewayMode=http`. |
 | `hermesAuthHeaderName` | string | `authorization` | Header name used to forward `hermesAuthToken`. |
+| `allowPrivateAdapterHosts` | boolean | `false` | Allows direct Node `fetch` to RFC1918/private adapter hosts beyond loopback. Leave disabled unless the adapter lives on a trusted internal network. |
 | `gatewayRequestTimeoutMs` | number | `45000` | Timeout budget for CLI and HTTP requests. |
 | `defaultProfileId` | string | `paperclip-master` | Default Hermes profile identifier. |
 | `defaultProvider` | string | `openrouter` | Default Hermes provider label. |
@@ -20,6 +21,7 @@ The plugin uses manifest-based instance configuration.
 | `defaultToolsets` | string[] | `["web", "file", "vision"]` | Default Hermes toolset policy. Unsupported toolsets are filtered out automatically before the Hermes call. |
 | `availablePluginTools` | string[] | built-in list | Allowed Paperclip/plugin tool descriptors attached to the Hermes request. |
 | `maxHistoryMessages` | number | `24` | Maximum number of recent messages included in each Hermes request. |
+| `maxMessageChars` | number | `12000` | Maximum trimmed text length accepted for one user turn. Enforced in both the UI and worker. |
 | `allowInlineImageData` | boolean | `true` | Allows inline image data URLs from the browser composer. |
 | `maxAttachmentCount` | number | `4` | Maximum images accepted in one turn. |
 | `maxAttachmentBytesPerFile` | number | `5000000` | Per-file inline image limit. |
@@ -90,10 +92,12 @@ MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
 MASTER_CHAT_ADAPTER_DEFAULT_PROFILE=default \
 MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER=auto \
 MASTER_CHAT_ADAPTER_DEFAULT_MODEL=MiniMax-M2.7 \
+MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000 \
 pnpm adapter:start
 ```
 
 The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes host defaults instead of redundantly forcing provider/model flags that are already satisfied by the local profile.
+`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES` bounds incoming JSON request size before the adapter parses it.
 
 ### Force the local CLI explicitly
 
@@ -109,13 +113,28 @@ The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes hos
 
 - Use `gatewayMode=auto` when the plugin and Hermes run on the same trusted VPS.
 - Use `gatewayMode=http` when you want a dedicated adapter boundary, stronger service auth, or richer structured traces.
+- Keep `allowPrivateAdapterHosts=false` unless you explicitly need a non-loopback RFC1918 adapter URL. Loopback URLs already work without this flag.
 - Keep `availablePluginTools` tightly allowlisted.
 - Prefer environment- or instance-specific routing in the adapter service rather than exposing provider secrets to the plugin UI.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
+- Tune `maxMessageChars` alongside attachment limits if you need tighter anti-abuse budgets.
 - Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.
 - Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, and verifies both CLI and HTTP paths end to end.
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
 - Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.
+- The bundled adapter honors `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES` (default `15000000`) so authenticated callers cannot stream arbitrarily large JSON payloads into the adapter process.
+
+## Validation behavior
+
+The worker validates config updates before accepting them:
+
+- `gatewayMode=http` requires both `hermesBaseUrl` and `hermesAuthToken`
+- `hermesBaseUrl` must be an absolute `http` or `https` URL
+- loopback adapter URLs are always allowed for same-host deployments
+- RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
+- `maxTotalAttachmentBytes` must be at least `maxAttachmentBytesPerFile`
+- `maxMessageChars` must be at least `1`
+- explicit blank `hermesAuthHeaderName` and explicit `maxMessageChars <= 0` are rejected instead of being silently coerced to defaults
 
 ## CLI compatibility note
 

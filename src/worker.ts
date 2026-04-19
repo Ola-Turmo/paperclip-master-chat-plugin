@@ -62,14 +62,24 @@ function normalizeConfig(config: Record<string, unknown> | null | undefined): Ma
     hermesAuthHeaderName: typeof config?.hermesAuthHeaderName === "string" && config.hermesAuthHeaderName.trim()
       ? config.hermesAuthHeaderName.trim().toLowerCase()
       : DEFAULT_CONFIG.hermesAuthHeaderName,
+    allowPrivateAdapterHosts: typeof config?.allowPrivateAdapterHosts === "boolean"
+      ? config.allowPrivateAdapterHosts
+      : DEFAULT_CONFIG.allowPrivateAdapterHosts,
     gatewayRequestTimeoutMs: numberConfig(config?.gatewayRequestTimeoutMs, DEFAULT_CONFIG.gatewayRequestTimeoutMs, 1_000),
-    defaultProfileId: typeof config?.defaultProfileId === "string" ? config.defaultProfileId : DEFAULT_CONFIG.defaultProfileId,
-    defaultProvider: typeof config?.defaultProvider === "string" ? config.defaultProvider : DEFAULT_CONFIG.defaultProvider,
-    defaultModel: typeof config?.defaultModel === "string" ? config.defaultModel : DEFAULT_CONFIG.defaultModel,
+    defaultProfileId: typeof config?.defaultProfileId === "string" && config.defaultProfileId.trim()
+      ? config.defaultProfileId.trim()
+      : DEFAULT_CONFIG.defaultProfileId,
+    defaultProvider: typeof config?.defaultProvider === "string" && config.defaultProvider.trim()
+      ? config.defaultProvider.trim()
+      : DEFAULT_CONFIG.defaultProvider,
+    defaultModel: typeof config?.defaultModel === "string" && config.defaultModel.trim()
+      ? config.defaultModel.trim()
+      : DEFAULT_CONFIG.defaultModel,
     defaultEnabledSkills: stringArray(config?.defaultEnabledSkills, [...DEFAULT_CONFIG.defaultEnabledSkills]),
     defaultToolsets: stringArray(config?.defaultToolsets, [...DEFAULT_CONFIG.defaultToolsets]),
     availablePluginTools: stringArray(config?.availablePluginTools, [...DEFAULT_CONFIG.availablePluginTools]),
     maxHistoryMessages: numberConfig(config?.maxHistoryMessages, DEFAULT_CONFIG.maxHistoryMessages, 4),
+    maxMessageChars: numberConfig(config?.maxMessageChars, DEFAULT_CONFIG.maxMessageChars, 1),
     allowInlineImageData: typeof config?.allowInlineImageData === "boolean" ? config.allowInlineImageData : DEFAULT_CONFIG.allowInlineImageData,
     maxAttachmentCount: numberConfig(config?.maxAttachmentCount, DEFAULT_CONFIG.maxAttachmentCount, 0),
     maxAttachmentBytesPerFile: numberConfig(config?.maxAttachmentBytesPerFile, DEFAULT_CONFIG.maxAttachmentBytesPerFile, 1),
@@ -118,15 +128,161 @@ function pluginWarnings(config: MasterChatPluginConfig): string[] {
   if (config.gatewayMode === "http" && !config.hermesAuthToken) {
     warnings.push("Hermes HTTP mode is configured without adapter authentication and will fail closed until hermesAuthToken is set.");
   }
+  if (config.allowPrivateAdapterHosts) {
+    warnings.push("Private adapter hosts are allowed for direct fetch. Enable this only on trusted internal deployments.");
+  }
   return warnings;
 }
 
-function estimateAttachmentBytes(attachment: InlineImageAttachment): number {
-  if (typeof attachment.byteSize === "number" && Number.isFinite(attachment.byteSize)) {
-    return attachment.byteSize;
+function isRfc1918Host(hostname: string): boolean {
+  if (/^10(?:\.\d{1,3}){3}$/u.test(hostname)) return true;
+  if (/^192\.168(?:\.\d{1,3}){2}$/u.test(hostname)) return true;
+  const match172 = hostname.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/u);
+  if (!match172) return false;
+  const octet = Number(match172[1]);
+  return octet >= 16 && octet <= 31;
+}
+
+function validateConfigShape(config: MasterChatPluginConfig): { ok: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings = pluginWarnings(config);
+  const requestedGatewayMode = config.gatewayMode;
+
+  if (!config.hermesAuthHeaderName.trim()) {
+    errors.push("hermesAuthHeaderName must not be empty");
   }
-  const [, payload = ""] = attachment.dataUrl.split(",", 2);
-  return Math.ceil((payload.length * 3) / 4);
+
+  if (requestedGatewayMode === "cli" && !config.hermesCommand.trim()) {
+    errors.push("gatewayMode=cli requires hermesCommand");
+  }
+
+  if (requestedGatewayMode === "http") {
+    if (!config.hermesBaseUrl.trim()) {
+      errors.push("gatewayMode=http requires hermesBaseUrl");
+    }
+    if (!config.hermesAuthToken.trim()) {
+      errors.push("gatewayMode=http requires hermesAuthToken");
+    }
+
+    if (config.hermesBaseUrl.trim()) {
+      try {
+        const url = new URL(config.hermesBaseUrl);
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+          errors.push("hermesBaseUrl must use http or https");
+        }
+        const hostname = url.hostname.toLowerCase();
+        const isLoopback = hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+        if (!isLoopback && isRfc1918Host(hostname) && !config.allowPrivateAdapterHosts) {
+          errors.push("RFC1918 hermesBaseUrl hosts require allowPrivateAdapterHosts=true");
+        }
+      } catch {
+        errors.push("hermesBaseUrl must be a valid absolute URL");
+      }
+    }
+  }
+
+  if (config.maxTotalAttachmentBytes < config.maxAttachmentBytesPerFile) {
+    errors.push("maxTotalAttachmentBytes must be greater than or equal to maxAttachmentBytesPerFile");
+  }
+
+  if (config.maxMessageChars < 1) {
+    errors.push("maxMessageChars must be at least 1");
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+function validateConfigInput(rawConfig: Record<string, unknown> | null | undefined): { ok: boolean; errors: string[]; warnings: string[] } {
+  const config = normalizeConfig(rawConfig);
+  const errors: string[] = [];
+  const explicitGatewayMode = rawConfig?.gatewayMode;
+  const gatewayMode = explicitGatewayMode === "http" || explicitGatewayMode === "mock" || explicitGatewayMode === "cli" || explicitGatewayMode === "auto"
+    ? explicitGatewayMode
+    : config.gatewayMode;
+
+  if (typeof rawConfig?.hermesAuthHeaderName === "string" && !rawConfig.hermesAuthHeaderName.trim()) {
+    errors.push("hermesAuthHeaderName must not be empty");
+  }
+
+  if (gatewayMode === "cli" && typeof rawConfig?.hermesCommand === "string" && !rawConfig.hermesCommand.trim()) {
+    errors.push("gatewayMode=cli requires hermesCommand");
+  }
+
+  if (typeof rawConfig?.maxMessageChars === "number" && (!Number.isFinite(rawConfig.maxMessageChars) || rawConfig.maxMessageChars < 1)) {
+    errors.push("maxMessageChars must be at least 1");
+  }
+
+  if (typeof rawConfig?.maxAttachmentBytesPerFile === "number" && (!Number.isFinite(rawConfig.maxAttachmentBytesPerFile) || rawConfig.maxAttachmentBytesPerFile < 1)) {
+    errors.push("maxAttachmentBytesPerFile must be at least 1");
+  }
+
+  if (typeof rawConfig?.maxTotalAttachmentBytes === "number" && (!Number.isFinite(rawConfig.maxTotalAttachmentBytes) || rawConfig.maxTotalAttachmentBytes < 1)) {
+    errors.push("maxTotalAttachmentBytes must be at least 1");
+  }
+
+  if (
+    typeof rawConfig?.maxAttachmentBytesPerFile === "number"
+    && typeof rawConfig?.maxTotalAttachmentBytes === "number"
+    && Number.isFinite(rawConfig.maxAttachmentBytesPerFile)
+    && Number.isFinite(rawConfig.maxTotalAttachmentBytes)
+    && rawConfig.maxTotalAttachmentBytes < rawConfig.maxAttachmentBytesPerFile
+  ) {
+    errors.push("maxTotalAttachmentBytes must be greater than or equal to maxAttachmentBytesPerFile");
+  }
+
+  if (gatewayMode === "http") {
+    if (typeof rawConfig?.hermesBaseUrl === "string" && !rawConfig.hermesBaseUrl.trim()) {
+      errors.push("gatewayMode=http requires hermesBaseUrl");
+    }
+    if (typeof rawConfig?.hermesAuthToken === "string" && !rawConfig.hermesAuthToken.trim()) {
+      errors.push("gatewayMode=http requires hermesAuthToken");
+    }
+  }
+
+  const normalizedValidation = validateConfigShape(config);
+  errors.push(...normalizedValidation.errors);
+
+  return {
+    ok: errors.length === 0,
+    errors: [...new Set(errors)],
+    warnings: normalizedValidation.warnings,
+  };
+}
+
+function validateMessageText(config: MasterChatPluginConfig, text: string): string {
+  const normalized = text.trim();
+  if (normalized.length > config.maxMessageChars) {
+    throw validationError(`Message text exceeds the ${config.maxMessageChars} character limit`);
+  }
+  return normalized;
+}
+
+function estimateAttachmentBytes(attachment: InlineImageAttachment): number {
+  const match = attachment.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/u);
+  if (!match) {
+    throw validationError(`Attachment '${attachment.name}' must be a base64 data URL`);
+  }
+
+  const [, mediaType, encoded] = match;
+  if (mediaType.toLowerCase() !== attachment.mimeType.toLowerCase()) {
+    throw validationError(`Attachment '${attachment.name}' data URL type does not match '${attachment.mimeType}'`);
+  }
+
+  const payload = encoded.replace(/\s+/gu, "");
+  if (!payload) {
+    throw validationError(`Attachment '${attachment.name}' is empty`);
+  }
+
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  const byteSize = Math.floor((payload.length * 3) / 4) - padding;
+  if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+    throw validationError(`Attachment '${attachment.name}' has an invalid byte size`);
+  }
+  return byteSize;
 }
 
 function validateAttachments(config: MasterChatPluginConfig, attachments: InlineImageAttachment[]): InlineImageAttachment[] {
@@ -491,7 +647,7 @@ async function sendMessageAction(
     throw concurrencyError(`Thread '${thread.threadId}' already has an in-flight request`);
   }
 
-  const text = typeof params.text === "string" ? params.text.trim() : "";
+  const text = typeof params.text === "string" ? validateMessageText(config, params.text) : "";
   const attachments = validateAttachments(config, Array.isArray(params.attachments) ? params.attachments as InlineImageAttachment[] : []);
   if (!text && attachments.length === 0) {
     throw validationError("A message requires text or at least one attachment");
@@ -634,6 +790,10 @@ const plugin = definePlugin({
   async onConfigChanged(newConfig) {
     const normalized = normalizeConfig(newConfig);
     Object.assign(pluginState, { currentConfig: normalized });
+  },
+
+  async onValidateConfig(config) {
+    return validateConfigInput(config);
   },
 
   async onHealth() {

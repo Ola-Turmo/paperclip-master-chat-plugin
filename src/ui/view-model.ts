@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatMessagePart, ThreadScope } from "../types.js";
+import type { ChatMessage, ChatMessagePart, HermesStreamEvent, ThreadScope } from "../types.js";
 
 export function scopeSummary(scope: ThreadScope): string {
   const labels = [scope.projectId ? `Project ${scope.projectId}` : "Company-wide"];
@@ -23,4 +23,14 @@ export function summarizeMessage(message: ChatMessage): string {
   const firstTool = message.parts.find((part) => part.type === "tool_call" || part.type === "tool_result");
   if (firstTool && "toolName" in firstTool) return `[Tool] ${firstTool.toolName}`;
   return `[${message.role}]`;
+}
+
+export function formatStreamStatus(event: Extract<HermesStreamEvent, { type: "status" }>): string {
+  return `${event.stage}: ${event.message}`;
+}
+
+export function appendStreamDelta(current: string, event: Extract<HermesStreamEvent, { type: "delta" }>): string {
+  const next = event.text.trim();
+  if (!next) return current;
+  return [current, next].filter(Boolean).join("\n").trim();
 }

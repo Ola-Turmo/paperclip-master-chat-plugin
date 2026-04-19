@@ -19,7 +19,7 @@ import type {
   ThreadDetailData,
   ThreadSummary,
 } from "../types.js";
-import { scopeSummary } from "./view-model.js";
+import { appendStreamDelta, formatStreamStatus, scopeSummary } from "./view-model.js";
 
 const layoutStyle: CSSProperties = {
   display: "grid",
@@ -325,13 +325,13 @@ function ChatSurface({ forcedIssueId }: { forcedIssueId?: string }) {
     if (!stream.lastEvent) return;
     const event = stream.lastEvent as HermesStreamEvent;
     if (event.type === "status") {
-      setStreamStatus((current) => [...current.slice(-4), `: `]);
+      setStreamStatus((current) => [...current.slice(-4), formatStreamStatus(event)]);
       if (event.stage === "completed") {
         setIsSending(false);
       }
       return;
     }
-    setStreamText((current) => ``.trim());
+    setStreamText((current) => appendStreamDelta(current, event));
   }, [stream.lastEvent]);
 
   useEffect(() => {
@@ -415,6 +415,10 @@ function ChatSurface({ forcedIssueId }: { forcedIssueId?: string }) {
     const currentRequestId = requestId();
 
     try {
+      if (composer.text.trim().length > bootstrapData.config.maxMessageChars) {
+        throw new Error(`Message text exceeds the ${bootstrapData.config.maxMessageChars} character limit`);
+      }
+
       const result = await sendMessage({
         companyId,
         threadId: selectedThreadId,
@@ -525,13 +529,22 @@ function ChatSurface({ forcedIssueId }: { forcedIssueId?: string }) {
                 placeholder="Ask Hermes to compare delivery risk, summarize project state, or reason over attached images…"
                 onChange={(event) => setComposer((current) => ({ ...current, text: event.target.value }))}
               />
+              <div style={mutedStyle}>
+                {composer.text.length}/{bootstrapData.config.maxMessageChars} characters
+              </div>
               {composerError ? <div style={errorStyle}>{composerError}</div> : null}
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 <label style={{ ...buttonStyle, opacity: isSending ? 0.6 : 1 }}>
                   + Add image
                   <input disabled={isSending} type="file" accept={SAFE_INLINE_IMAGE_MIME_TYPES.join(",")} multiple hidden onChange={(event: ChangeEvent<HTMLInputElement>) => void addFiles(event.target.files)} />
                 </label>
-                <button type="submit" style={{ ...primaryButtonStyle, opacity: isSending ? 0.7 : 1 }} disabled={isSending}>{isSending ? "Sending…" : "Send"}</button>
+                <button
+                  type="submit"
+                  style={{ ...primaryButtonStyle, opacity: isSending || composer.text.trim().length > bootstrapData.config.maxMessageChars ? 0.7 : 1 }}
+                  disabled={isSending || composer.text.trim().length > bootstrapData.config.maxMessageChars}
+                >
+                  {isSending ? "Sending…" : "Send"}
+                </button>
                 {selectedThreadId ? (
                   <button type="button" style={{ ...buttonStyle, opacity: isSending ? 0.6 : 1 }} disabled={isSending} onClick={() => void handleRetry()}>Retry last failed turn</button>
                 ) : null}

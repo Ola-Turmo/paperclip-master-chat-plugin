@@ -22,6 +22,16 @@ function fail(message) {
   throw new Error(message);
 }
 
+function isTransientSmokeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("\"TIMEOUT\"")
+    || message.includes("502 Bad Gateway")
+    || message.includes("503 Service Unavailable")
+    || message.includes("404 Not Found: {\"error\":\"Plugin not found\"}")
+  );
+}
+
 function assertRepoExists(repoPath, label) {
   if (!existsSync(repoPath)) fail(`${label} not found at ${repoPath}`);
 }
@@ -62,6 +72,18 @@ async function ensurePluginInstalled() {
   const plugin = plugins.find((entry) => entry.pluginKey === pluginKey);
   if (!plugin) fail(`Plugin ${pluginKey} was not found after install`);
   return plugin;
+}
+
+async function waitForPluginReady(attempts = 40) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const plugins = await listPlugins();
+      const plugin = plugins.find((entry) => entry.pluginKey === pluginKey);
+      if (plugin?.status === "ready") return plugin;
+    } catch {}
+    await delay(500);
+  }
+  fail(`Timed out waiting for plugin ${pluginKey} to become ready`);
 }
 
 async function getPluginConfig() {
@@ -153,6 +175,24 @@ async function sendSmokeTurn(mode, companyId) {
   };
 }
 
+async function sendSmokeTurnWithRetry(mode, companyId, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await waitForPluginReady();
+      return await sendSmokeTurn(mode, companyId);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isTransientSmokeError(error)) {
+        throw error;
+      }
+      log("retry", `${mode} smoke turn attempt ${attempt} failed transiently; retrying`);
+      await delay(1_500 * attempt);
+    }
+  }
+  throw lastError;
+}
+
 async function waitForHealth(url, attempts = 20) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -221,6 +261,7 @@ async function main() {
 
   log("plugin", "Ensuring plugin is installed");
   const plugin = await ensurePluginInstalled();
+  await waitForPluginReady();
   if (plugin.status !== "ready") fail(`Plugin ${pluginKey} is not ready (status=${plugin.status})`);
 
   const companyId = await firstCompanyId();
@@ -231,10 +272,11 @@ async function main() {
   try {
     log("cli", "Running CLI gateway smoke turn");
     await setPluginConfig({ ...baseVerifiedConfig, gatewayMode: "cli" });
+    await waitForPluginReady();
     const cliConfig = await getPluginConfig();
     if (cliConfig?.configJson?.gatewayMode !== "cli") fail(`Expected cli config to persist, received ${JSON.stringify(cliConfig?.configJson)}`);
     await delay(1_000);
-    summary.runs.push(await sendSmokeTurn("cli", companyId));
+    summary.runs.push(await sendSmokeTurnWithRetry("cli", companyId));
 
     log("adapter", "Starting bundled HTTP adapter");
     adapterHandle = await startAdapter();
@@ -247,10 +289,11 @@ async function main() {
       hermesAuthToken: adapterToken,
       hermesAuthHeaderName: "authorization",
     });
+    await waitForPluginReady();
     const httpConfig = await getPluginConfig();
     if (httpConfig?.configJson?.gatewayMode !== "http") fail(`Expected http config to persist, received ${JSON.stringify(httpConfig?.configJson)}`);
     await delay(1_000);
-    summary.runs.push(await sendSmokeTurn("http", companyId));
+    summary.runs.push(await sendSmokeTurnWithRetry("http", companyId));
 
     console.log(JSON.stringify(summary, null, 2));
   } finally {

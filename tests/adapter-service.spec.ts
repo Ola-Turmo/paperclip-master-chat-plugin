@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId } from "../src/adapter-service.js";
+import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited } from "../src/adapter-service.js";
 import type { HermesGatewayPayload } from "../src/hermes/payload.js";
 
 function samplePayload(): HermesGatewayPayload {
@@ -81,6 +81,7 @@ describe("adapter service helpers", () => {
       authToken: "secret-token",
       authHeaderName: "authorization",
       timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
     });
     expect(expected).toBe("Bearer secret-token");
     expect(isAuthorized({ authorization: expected }, {
@@ -94,9 +95,17 @@ describe("adapter service helpers", () => {
       authToken: "secret-token",
       authHeaderName: "authorization",
       timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
     })).toBe(true);
   });
 
+  it("rejects oversized adapter request bodies", async () => {
+    await expect(readJsonLimited((async function* () {
+      yield Buffer.from("{\"data\":\"");
+      yield Buffer.from("x".repeat(32));
+      yield Buffer.from("\"}");
+    }()), 16)).rejects.toMatchObject({ name: "PayloadTooLargeError" });
+  });
 
   it("keeps Hermes capability preferences in the prompt instead of forwarding -s/-t flags", async () => {
     const invocation = await buildAdapterInvocation({
@@ -110,6 +119,7 @@ describe("adapter service helpers", () => {
       authToken: "secret-token",
       authHeaderName: "authorization",
       timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
     }, samplePayload());
 
     expect(invocation.invocation.args).not.toContain("-s");
@@ -123,5 +133,21 @@ describe("adapter service helpers", () => {
 
   it("parses Hermes session IDs from output", () => {
     expect(parseSessionId("Session ID: sess_abc123")).toBe("sess_abc123");
+  });
+
+  it("rejects mismatched bearer headers", () => {
+    expect(isAuthorized({ authorization: "Bearer wrong-token" }, {
+      port: 8788,
+      host: "127.0.0.1",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "auto",
+      defaultModel: "anthropic/claude-sonnet-4",
+      authToken: "secret-token",
+      authHeaderName: "authorization",
+      timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
+    })).toBe(false);
   });
 });
