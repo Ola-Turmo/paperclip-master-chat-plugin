@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { MasterChatPluginConfig, SkillPolicy } from "../types.js";
+import { armProcessTimeout } from "../process.js";
 
 export interface HermesCapabilityInventory {
   availableSkills: string[];
@@ -41,10 +42,9 @@ async function runHermesCommand(
 
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
+    const clearTimeouts = armProcessTimeout(child, timeoutMs, () => {
       reject(new Error(`Hermes capability probe timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    });
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -55,12 +55,12 @@ async function runHermesCommand(
     });
 
     child.on("error", (error) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       reject(error);
     });
 
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       if (code === 0) {
         resolve(stripAnsi(`${stdout}\n${stderr}`));
         return;

@@ -1,6 +1,17 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited, resolveAdapterSessionState, verifySignedRequest } from "../src/adapter-service.js";
+import {
+  buildAdapterInvocation,
+  buildAdapterPrompt,
+  getExpectedAuthValue,
+  isAuthorized,
+  parseSessionId,
+  readJsonLimited,
+  resolveAdapterSessionState,
+  validateAdapterServiceConfig,
+  validateGatewayPayload,
+  verifySignedRequest,
+} from "../src/adapter-service.js";
 import type { HermesCapabilityInventory } from "../src/hermes/capabilities.js";
 import type { HermesGatewayPayload } from "../src/hermes/payload.js";
 
@@ -109,6 +120,40 @@ describe("adapter service helpers", () => {
       yield Buffer.from("x".repeat(32));
       yield Buffer.from("\"}");
     }()), 16)).rejects.toMatchObject({ name: "PayloadTooLargeError" });
+  });
+
+  it("rejects invalid adapter config values before the server starts", () => {
+    expect(validateAdapterServiceConfig({
+      port: 8788,
+      host: "127.0.0.1",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "auto",
+      defaultModel: "anthropic/claude-sonnet-4",
+      authToken: "secret-token",
+      authHeaderName: "bad header",
+      timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
+    })).toContain("authHeaderName must be a valid HTTP header name");
+  });
+
+  it("rejects malformed gateway payloads before invoking Hermes", () => {
+    expect(validateGatewayPayload({
+      session: {},
+      metadata: { threadId: "" },
+      scope: {},
+      messages: "nope",
+      skillPolicy: {},
+      toolPolicy: {},
+    })).toEqual(expect.arrayContaining([
+      "metadata.threadId is required",
+      "scope.companyId is required",
+      "messages must be an array",
+      "skillPolicy must include enabled, disabled, and toolsets arrays",
+      "toolPolicy must include allowedPluginTools and allowedHermesToolsets arrays",
+    ]));
   });
 
   it("keeps Hermes capability preferences in the prompt instead of forwarding -s/-t flags", async () => {

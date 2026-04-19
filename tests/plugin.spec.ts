@@ -119,12 +119,12 @@ describe("master chat plugin", () => {
     harness.setConfig({
       gatewayMode: "http",
       hermesBaseUrl: "http://127.0.0.1:8788",
-      hermesAuthToken: "",
+      hermesAuthToken: "secret-token",
     });
     await plugin.definition.onConfigChanged?.({
       gatewayMode: "http",
       hermesBaseUrl: "http://127.0.0.1:8788",
-      hermesAuthToken: "",
+      hermesAuthToken: "secret-token",
     });
 
     const config = await harness.getData<{ gatewayMode: string }>("plugin-config", {});
@@ -134,7 +134,25 @@ describe("master chat plugin", () => {
       companyId: "comp_1",
       requestId: "req_after_config_change",
       text: "This should use the updated HTTP config.",
-    })).rejects.toThrow(/hermesAuthToken/i);
+    })).rejects.toThrow(/fetch failed|ECONNREFUSED|connect/i);
+  });
+
+  it("ignores invalid config changes instead of applying unsafe runtime settings", async () => {
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
+    seedHarness(harness);
+
+    await plugin.definition.setup(harness.ctx);
+
+    await plugin.definition.onConfigChanged?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "https://adapter.example.com",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "bad header",
+    });
+
+    const config = await harness.getData<{ gatewayMode: string; hermesAuthHeaderName: string }>("plugin-config", {});
+    expect(config.gatewayMode).toBe("mock");
+    expect(config.hermesAuthHeaderName).toBe("authorization");
   });
 
   it("validates risky adapter configs and enforces a text length limit", async () => {
@@ -192,6 +210,15 @@ describe("master chat plugin", () => {
     });
     expect(invalidHeader?.ok).toBe(false);
     expect(invalidHeader?.errors?.some((entry) => /hermesAuthHeaderName/i.test(entry))).toBe(true);
+
+    const malformedHeader = await plugin.definition.onValidateConfig?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "https://adapter.example.com",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "bad header",
+    });
+    expect(malformedHeader?.ok).toBe(false);
+    expect(malformedHeader?.errors?.some((entry) => /valid HTTP header name/i.test(entry))).toBe(true);
 
     const invalidMessageChars = await plugin.definition.onValidateConfig?.({
       gatewayMode: "mock",

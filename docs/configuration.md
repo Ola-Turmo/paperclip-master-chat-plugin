@@ -11,7 +11,7 @@ The plugin uses manifest-based instance configuration.
 | `hermesCommand` | string | `hermes` | Command or absolute path for the local Hermes CLI. |
 | `hermesWorkingDirectory` | string | `""` | Optional cwd for local Hermes execution, useful when reusing a checked-out Hermes repo on the VPS. |
 | `hermesAuthToken` | string | `""` | Shared secret or bearer token for the Hermes HTTP adapter. Required for `gatewayMode=http`. |
-| `hermesAuthHeaderName` | string | `authorization` | Header name used to forward `hermesAuthToken`. |
+| `hermesAuthHeaderName` | string | `authorization` | Header name used to forward `hermesAuthToken`. Must be a valid HTTP header token. |
 | `allowPrivateAdapterHosts` | boolean | `false` | Allows direct Node `fetch` to RFC1918/private adapter hosts beyond loopback. Leave disabled unless the adapter lives on a trusted internal network. |
 | `allowInsecureHttpAdapters` | boolean | `false` | Allows non-loopback `http://` adapter URLs. Leave disabled unless you are intentionally using a trusted internal adapter without HTTPS. |
 | `gatewayRequestTimeoutMs` | number | `45000` | Timeout budget for CLI and HTTP requests. |
@@ -133,12 +133,14 @@ The worker validates config updates before accepting them:
 
 - `gatewayMode=http` requires both `hermesBaseUrl` and `hermesAuthToken`
 - `hermesBaseUrl` must be an absolute `http` or `https` URL
+- `hermesAuthHeaderName` must be a syntactically valid HTTP header name
 - non-loopback adapter URLs must use `https` unless `allowInsecureHttpAdapters=true`
 - loopback adapter URLs are always allowed for same-host deployments
 - RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
 - `maxTotalAttachmentBytes` must be at least `maxAttachmentBytesPerFile`
 - `maxMessageChars` must be at least `1`
-- explicit blank `hermesAuthHeaderName` and explicit `maxMessageChars <= 0` are rejected instead of being silently coerced to defaults
+- explicit blank or malformed `hermesAuthHeaderName` values and explicit `maxMessageChars <= 0` are rejected instead of being silently coerced to defaults
+- invalid runtime config changes are ignored instead of replacing the last known-safe worker config
 - the bundled adapter expects timestamped HMAC signature headers on `/sessions/continue` and rejects stale or replayed nonces
 
 ## CLI compatibility note

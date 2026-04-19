@@ -6,6 +6,7 @@ import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payloa
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
 import type { HermesCapabilityInventory } from "./hermes/capabilities.js";
 import type { HermesContinuationMode, HermesResponse, HermesToolTrace } from "./types.js";
+import { armProcessTimeout } from "./process.js";
 
 export interface AdapterInvocation {
   command: string;
@@ -27,6 +28,8 @@ export interface AdapterServiceConfig {
   maxRequestBodyBytes: number;
   maxClockSkewMs: number;
 }
+
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 
 function envNumber(name: string, fallback: number): number {
   const value = process.env[name];
@@ -57,6 +60,29 @@ export function getExpectedAuthValue(config: AdapterServiceConfig): string {
     return `Bearer ${config.authToken}`;
   }
   return config.authToken;
+}
+
+export function validateAdapterServiceConfig(config: AdapterServiceConfig): string[] {
+  const errors: string[] = [];
+  if (!config.authToken.trim()) errors.push("authToken is required");
+  if (!config.authHeaderName.trim()) {
+    errors.push("authHeaderName must not be empty");
+  } else if (!HTTP_HEADER_NAME_RE.test(config.authHeaderName)) {
+    errors.push("authHeaderName must be a valid HTTP header name");
+  }
+  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
+    errors.push("port must be an integer between 1 and 65535");
+  }
+  if (!Number.isFinite(config.timeoutMs) || config.timeoutMs < 1_000) {
+    errors.push("timeoutMs must be at least 1000");
+  }
+  if (!Number.isFinite(config.maxRequestBodyBytes) || config.maxRequestBodyBytes < 1) {
+    errors.push("maxRequestBodyBytes must be at least 1");
+  }
+  if (!Number.isFinite(config.maxClockSkewMs) || config.maxClockSkewMs < 1) {
+    errors.push("maxClockSkewMs must be at least 1");
+  }
+  return errors;
 }
 
 export function isAuthorized(headers: Record<string, string | string[] | undefined>, config: AdapterServiceConfig): boolean {
@@ -299,10 +325,9 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
 
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
+    const clearTimeouts = armProcessTimeout(child, config.timeoutMs, () => {
       reject(new Error(`Hermes adapter timed out after ${config.timeoutMs}ms`));
-    }, config.timeoutMs);
+    });
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -313,12 +338,12 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
     });
 
     child.on("error", (error) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       reject(error);
     });
 
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       if (code === 0) {
         resolve({ stdout, stderr });
         return;
@@ -374,6 +399,38 @@ export async function readJsonLimited(
   return JSON.parse(text);
 }
 
+function hasJsonContentType(contentType: string | undefined): boolean {
+  return typeof contentType === "string" && /^application\/json\b/i.test(contentType);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function validateGatewayPayload(payload: unknown): string[] {
+  const errors: string[] = [];
+  if (!isRecord(payload)) {
+    return ["request body must be a JSON object"];
+  }
+
+  if (!isRecord(payload.session)) errors.push("session must be an object");
+  if (!isRecord(payload.metadata) || typeof payload.metadata.threadId !== "string" || !payload.metadata.threadId.trim()) {
+    errors.push("metadata.threadId is required");
+  }
+  if (!isRecord(payload.scope) || typeof payload.scope.companyId !== "string" || !payload.scope.companyId.trim()) {
+    errors.push("scope.companyId is required");
+  }
+  if (!Array.isArray(payload.messages)) errors.push("messages must be an array");
+  if (!isRecord(payload.skillPolicy) || !Array.isArray(payload.skillPolicy.enabled) || !Array.isArray(payload.skillPolicy.disabled) || !Array.isArray(payload.skillPolicy.toolsets)) {
+    errors.push("skillPolicy must include enabled, disabled, and toolsets arrays");
+  }
+  if (!isRecord(payload.toolPolicy) || !Array.isArray(payload.toolPolicy.allowedPluginTools) || !Array.isArray(payload.toolPolicy.allowedHermesToolsets)) {
+    errors.push("toolPolicy must include allowedPluginTools and allowedHermesToolsets arrays");
+  }
+
+  return errors;
+}
+
 function sendJson(res: import("node:http").ServerResponse, status: number, payload: unknown) {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
@@ -381,6 +438,10 @@ function sendJson(res: import("node:http").ServerResponse, status: number, paylo
 }
 
 export function createAdapterServer(config: AdapterServiceConfig) {
+  const configErrors = validateAdapterServiceConfig(config);
+  if (configErrors.length > 0) {
+    throw new Error(`Invalid adapter config: ${configErrors.join("; ")}`);
+  }
   const seenNonces = new Map<string, number>();
   return createServer(async (req, res) => {
     try {
@@ -401,14 +462,23 @@ export function createAdapterServer(config: AdapterServiceConfig) {
           sendJson(res, 401, { error: "unauthorized" });
           return;
         }
+        if (!hasJsonContentType(readHeader(headers, "content-type"))) {
+          sendJson(res, 415, { error: "unsupported_media_type" });
+          return;
+        }
         const bodyText = await readBodyLimited(req, config.maxRequestBodyBytes);
         const signature = verifySignedRequest(headers, config, req.method, url.pathname, bodyText, seenNonces);
         if (!signature.ok) {
           sendJson(res, 401, { error: signature.error });
           return;
         }
-        const payload = bodyText ? JSON.parse(bodyText) as HermesGatewayPayload : {} as HermesGatewayPayload;
-        const response = await runHermesChat(config, payload);
+        const payload = bodyText ? JSON.parse(bodyText) as unknown : {};
+        const payloadErrors = validateGatewayPayload(payload);
+        if (payloadErrors.length > 0) {
+          sendJson(res, 400, { error: "invalid_request", details: payloadErrors });
+          return;
+        }
+        const response = await runHermesChat(config, payload as HermesGatewayPayload);
         sendJson(res, 200, response);
         return;
       }
@@ -427,8 +497,9 @@ export function createAdapterServer(config: AdapterServiceConfig) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadAdapterServiceConfig();
-  if (!config.authToken.trim()) {
-    console.error("MASTER_CHAT_ADAPTER_TOKEN is required");
+  const configErrors = validateAdapterServiceConfig(config);
+  if (configErrors.length > 0) {
+    console.error(`Invalid adapter configuration: ${configErrors.join("; ")}`);
     process.exit(1);
   }
   const server = createAdapterServer(config);

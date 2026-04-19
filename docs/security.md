@@ -19,14 +19,15 @@ This plugin follows the current Paperclip alpha plugin model:
 - tool traces are redacted before persistence when `redactToolPayloads=true`
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
 - the bundled local adapter service requires the configured auth header/token before it will continue sessions
-- the bundled local adapter service compares auth tokens with `timingSafeEqual`, requires timestamped HMAC signature headers, rejects stale/replayed nonces, and rejects oversized request bodies with `413`
+- the bundled local adapter service compares auth tokens with `timingSafeEqual`, requires timestamped HMAC signature headers, rejects stale/replayed nonces, requires `application/json`, validates the payload shape, and rejects oversized request bodies with `413`
 - adapter responses that include a real `sessionId` are treated as durable continuation even if the adapter omits `continuationMode`, which reduces accidental stateless fallbacks in mixed adapter fleets
 - unsupported Hermes capability preferences are filtered before local CLI or adapter requests so host-specific catalogs do not become runtime footguns
 - loopback adapter URLs are treated as trusted-host deployments and use direct Node `fetch` instead of Paperclip's SSRF-guarded `ctx.http.fetch`
 - non-loopback RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
 - non-loopback remote adapter URLs must use `https` unless `allowInsecureHttpAdapters=true`
-- config validation rejects invalid HTTP adapter settings before the worker accepts them
+- config validation rejects invalid HTTP adapter settings before the worker accepts them, including malformed auth header names
 - message text is capped with `maxMessageChars` and enforced in both the UI and worker
+- invalid runtime config changes are ignored instead of replacing the last known-safe worker config
 
 ## Recommended controls
 

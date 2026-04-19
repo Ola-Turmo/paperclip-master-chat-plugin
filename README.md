@@ -99,6 +99,7 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `hermesAuthToken` / `hermesAuthHeaderName`: service auth for the adapter boundary
 - `allowPrivateAdapterHosts`: opt-in for direct fetch to RFC1918/private adapter URLs beyond loopback
 - `allowInsecureHttpAdapters`: opt-in for non-HTTPS remote adapter URLs
+- `hermesAuthHeaderName`: must be a valid HTTP header token; malformed values are rejected
 - `gatewayRequestTimeoutMs`
 - `defaultProfileId`
 - `defaultProvider`
@@ -143,7 +144,7 @@ HTTP mode now **fails closed** unless adapter auth is configured.
 
 Loopback adapter URLs such as `http://127.0.0.1:8788` use direct Node `fetch` automatically so same-VPS deployments can work even when Paperclip's guarded HTTP client blocks private ranges. Non-loopback RFC1918/private adapter hosts now require explicit `allowPrivateAdapterHosts=true`, and non-loopback `http://` adapter URLs require explicit `allowInsecureHttpAdapters=true`.
 
-The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`) and rejects oversized requests with `413`. Worker-to-adapter HTTP requests now include timestamped HMAC signature headers (`x-master-chat-date`, `x-master-chat-nonce`, `x-master-chat-signature`) so the bundled adapter can reject stale or replayed requests.
+The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`), requires `application/json`, validates the incoming payload shape, and rejects oversized requests with `413`. Worker-to-adapter HTTP requests now include timestamped HMAC signature headers (`x-master-chat-date`, `x-master-chat-nonce`, `x-master-chat-signature`) so the bundled adapter can reject stale or replayed requests.
 
 ### Bundled local adapter service
 

@@ -40,6 +40,8 @@ import type {
   ToolPolicy,
 } from "./types.js";
 
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
+
 function numberConfig(value: unknown, fallback: number, minimum: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(minimum, value) : fallback;
 }
@@ -160,6 +162,8 @@ function validateConfigShape(config: MasterChatPluginConfig): { ok: boolean; err
 
   if (!config.hermesAuthHeaderName.trim()) {
     errors.push("hermesAuthHeaderName must not be empty");
+  } else if (!HTTP_HEADER_NAME_RE.test(config.hermesAuthHeaderName)) {
+    errors.push("hermesAuthHeaderName must be a valid HTTP header name");
   }
 
   if (requestedGatewayMode === "cli" && !config.hermesCommand.trim()) {
@@ -219,6 +223,8 @@ function validateConfigInput(rawConfig: Record<string, unknown> | null | undefin
 
   if (typeof rawConfig?.hermesAuthHeaderName === "string" && !rawConfig.hermesAuthHeaderName.trim()) {
     errors.push("hermesAuthHeaderName must not be empty");
+  } else if (typeof rawConfig?.hermesAuthHeaderName === "string" && !HTTP_HEADER_NAME_RE.test(rawConfig.hermesAuthHeaderName.trim())) {
+    errors.push("hermesAuthHeaderName must be a valid HTTP header name");
   }
 
   if (gatewayMode === "cli" && typeof rawConfig?.hermesCommand === "string" && !rawConfig.hermesCommand.trim()) {
@@ -817,6 +823,11 @@ const plugin = definePlugin({
 
   async onConfigChanged(newConfig) {
     const normalized = normalizeConfig(newConfig);
+    const validation = validateConfigShape(normalized);
+    if (!validation.ok) {
+      console.warn("Ignoring invalid Master Chat config update", validation.errors);
+      return;
+    }
     Object.assign(pluginState, { currentConfig: normalized });
   },
 

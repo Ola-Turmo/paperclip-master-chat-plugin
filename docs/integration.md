@@ -174,8 +174,9 @@ The external adapter service should:
 7. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
 8. Require secure remote transport by default. Non-loopback adapter URLs must use `https` unless the operator explicitly sets `allowInsecureHttpAdapters=true`.
 9. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
-10. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
-11. Enforce adapter auth in a side-channel-resistant way.
+10. Require `application/json` and reject malformed payloads with `400` instead of passing unvalidated input to Hermes.
+11. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
+12. Enforce adapter auth in a side-channel-resistant way.
 
 ## Paperclip runtime considerations
 
@@ -184,7 +185,7 @@ The external adapter service should:
 - The browser never needs Hermes secrets or direct provider access.
 - Scope selectors are loaded paginated and now surface truncation warnings instead of silently hiding records.
 - Retry re-runs only the failed assistant continuation; it does not create a new user turn.
-- Worker config updates are validated before apply, so invalid adapter URLs or missing auth fail early instead of breaking the next live turn.
+- Worker config updates are validated before apply, so invalid adapter URLs, malformed auth header names, or missing auth fail early instead of breaking the next live turn.
 
 ## Suggested deployment shapes
 

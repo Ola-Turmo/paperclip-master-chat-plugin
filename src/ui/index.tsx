@@ -59,8 +59,12 @@ function initialComposerState() {
   };
 }
 
+let fallbackRequestCounter = 0;
+
 function requestId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  fallbackRequestCounter += 1;
+  return `fallback-${Date.now()}-${fallbackRequestCounter}`;
 }
 
 function humanBytes(bytes: number): string {

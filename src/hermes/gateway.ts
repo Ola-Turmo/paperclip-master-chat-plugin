@@ -14,6 +14,7 @@ import type {
 import { buildHermesCliInvocation, buildHermesCliPrompt } from "./cli.js";
 import { buildHermesGatewayPayload } from "./payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./capabilities.js";
+import { armProcessTimeout } from "../process.js";
 
 export interface HermesGateway {
   sendMessage(
@@ -165,10 +166,9 @@ async function runCommand(command: string, args: string[], cwd: string | undefin
 
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
+    const clearTimeouts = armProcessTimeout(child, timeoutMs, () => {
       reject(timeoutError(`Hermes CLI timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    });
 
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
@@ -179,12 +179,12 @@ async function runCommand(command: string, args: string[], cwd: string | undefin
     });
 
     child.on("error", (error) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       reject(unavailableError(`Failed to launch Hermes CLI command '${command}'`, error));
     });
 
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      clearTimeouts();
       if (code === 0) {
         resolve({ stdout, stderr });
         return;
