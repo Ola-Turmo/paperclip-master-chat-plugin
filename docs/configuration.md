@@ -16,8 +16,8 @@ The plugin uses manifest-based instance configuration.
 | `defaultProfileId` | string | `paperclip-master` | Default Hermes profile identifier. |
 | `defaultProvider` | string | `openrouter` | Default Hermes provider label. |
 | `defaultModel` | string | `anthropic/claude-sonnet-4` | Default Hermes model label. |
-| `defaultEnabledSkills` | string[] | built-in list | Default skill toggles shown in the UI. CLI mode keeps them as prompt hints; HTTP mode can forward them to an adapter. |
-| `defaultToolsets` | string[] | built-in list | Default Hermes toolset policy. CLI mode keeps them as prompt hints for compatibility. |
+| `defaultEnabledSkills` | string[] | `[]` | Default skill toggles shown in the UI. Unsupported Hermes skills are filtered out automatically in CLI/adapter mode. |
+| `defaultToolsets` | string[] | `["web", "file", "vision"]` | Default Hermes toolset policy. Unsupported toolsets are filtered out automatically before the Hermes call. |
 | `availablePluginTools` | string[] | built-in list | Allowed Paperclip/plugin tool descriptors attached to the Hermes request. |
 | `maxHistoryMessages` | number | `24` | Maximum number of recent messages included in each Hermes request. |
 | `allowInlineImageData` | boolean | `true` | Allows inline image data URLs from the browser composer. |
@@ -38,7 +38,12 @@ The plugin uses manifest-based instance configuration.
   "gatewayMode": "auto",
   "hermesCommand": "/usr/local/bin/hermes",
   "hermesWorkingDirectory": "/root/hermes-agent",
-  "hermesBaseUrl": ""
+  "hermesBaseUrl": "",
+  "defaultProfileId": "default",
+  "defaultProvider": "auto",
+  "defaultModel": "MiniMax-M2.7",
+  "defaultEnabledSkills": [],
+  "defaultToolsets": ["web", "file", "vision"]
 }
 ```
 
@@ -99,4 +104,4 @@ The plugin uses manifest-based instance configuration.
 
 ## CLI compatibility note
 
-When `gatewayMode` is `cli` or `auto` and the local Hermes CLI is selected, the plugin treats configured skills and toolsets as prompt context instead of strict `hermes chat -s/-t` flags. This avoids hard failures on VPS Hermes installs whose local skill catalogs differ from the UI defaults.
+When `gatewayMode` is `cli` or `auto` and the local Hermes CLI is selected, the plugin probes the host Hermes install (`hermes skills list` + `hermes tools list`) and filters out unsupported preferences before the request is sent. The remaining compatible preferences are passed as routing context without failing the turn.

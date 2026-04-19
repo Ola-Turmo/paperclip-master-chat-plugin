@@ -63,6 +63,8 @@ const status = {
     defaultProfileId: activeProfile || "paperclip-master",
     defaultProvider: activeProfile ? "auto" : "openrouter",
     defaultModel: activeModel || "anthropic/claude-sonnet-4",
+    defaultEnabledSkills: [],
+    defaultToolsets: ["web", "file", "vision"],
   },
   pluginInstallCommand,
 };

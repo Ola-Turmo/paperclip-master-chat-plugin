@@ -97,8 +97,8 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `defaultProfileId`
 - `defaultProvider`
 - `defaultModel`
-- `defaultEnabledSkills`
-- `defaultToolsets`
+- `defaultEnabledSkills` (safe default: `[]`)
+- `defaultToolsets` (safe default: `[`web`, `file`, `vision`]`)
 - `availablePluginTools`
 - `maxHistoryMessages`
 - `allowInlineImageData`
@@ -122,7 +122,7 @@ The worker probes the configured local Hermes CLI first. If that probe fails, it
 
 Force local CLI execution even outside auto-detection. Useful when you want predictable host-local routing through the already installed Hermes profile and model setup.
 
-In CLI mode, Paperclip skill and toolset toggles stay in the generated prompt as routing hints. They are not forwarded as strict `hermes chat -s/-t` flags, which keeps the plugin compatible with host-local Hermes installs that do not expose the same skill catalog.
+In CLI mode, Hermes capability preferences are sanitized against the host's installed skills/toolsets before the prompt is built. Unsupported preferences are skipped automatically instead of causing hard runtime failures on VPS installs whose local Hermes catalogs differ from the plugin defaults.
 
 ### `gatewayMode=http`
 

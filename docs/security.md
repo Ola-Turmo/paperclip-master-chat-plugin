@@ -19,6 +19,7 @@ This plugin follows the current Paperclip alpha plugin model:
 - tool traces are redacted before persistence when `redactToolPayloads=true`
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
 - the bundled local adapter service requires the configured auth header/token before it will continue sessions
+- unsupported Hermes capability preferences are filtered before local CLI or adapter requests so host-specific catalogs do not become runtime footguns
 
 ## Recommended controls
 

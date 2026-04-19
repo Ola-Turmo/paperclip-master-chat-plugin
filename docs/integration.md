@@ -12,14 +12,14 @@ The worker shells out to the configured Hermes binary and passes:
 - provider override (`--provider`)
 - model override (`-m`)
 - `--resume <sessionId>` when a durable Hermes session is already known
-- a normalized Paperclip-aware prompt assembled from thread scope and history, including the selected skill/toolset hints for routing context
+- a normalized Paperclip-aware prompt assembled from thread scope and history, with unsupported Hermes skills/toolsets filtered out automatically after probing the host install
 
 Representative invocation:
 
 ```bash
-hermes -p paperclip-master chat -Q --source tool \
-  --provider openrouter \
-  -m anthropic/claude-sonnet-4 \
+hermes -p default chat -Q --source tool \
+  --provider auto \
+  -m MiniMax-M2.7 \
   --resume sess_existing_optional \
   -q "<normalized Paperclip scope + history prompt>"
 ```
@@ -49,10 +49,10 @@ Request body shape:
 ```json
 {
   "session": {
-    "profileId": "paperclip-master",
+    "profileId": "default",
     "sessionId": "sess_existing_optional",
-    "model": "anthropic/claude-sonnet-4",
-    "provider": "openrouter"
+    "model": "MiniMax-M2.7",
+    "provider": "auto"
   },
   "metadata": {
     "threadId": "thr_123",
@@ -66,13 +66,13 @@ Request body shape:
     "mode": "single_agent"
   },
   "skillPolicy": {
-    "enabled": ["paperclip-search", "issue-summarize"],
+    "enabled": [],
     "disabled": [],
-    "toolsets": ["web", "paperclip-context"]
+    "toolsets": ["web", "file", "vision"]
   },
   "toolPolicy": {
     "allowedPluginTools": ["paperclip.dashboard"],
-    "allowedHermesToolsets": ["web", "paperclip-context"]
+    "allowedHermesToolsets": ["web", "file", "vision"]
   },
   "context": {
     "company": { "id": "comp_123", "name": "Acme" },
@@ -147,8 +147,8 @@ The service exposes:
       "output": { "ok": true }
     }
   ],
-  "provider": "openrouter",
-  "model": "anthropic/claude-sonnet-4",
+  "provider": "auto",
+  "model": "MiniMax-M2.7",
   "sessionId": "sess_new_or_existing",
   "gatewayMode": "http",
   "continuationMode": "durable"
@@ -162,8 +162,9 @@ The external adapter service should:
 1. Continue or create Hermes sessions.
 2. Translate plugin-provided scope and tools into Hermes system/context prompts.
 3. Route multimodal blocks to Hermes in the form expected by the target provider.
-4. Return normalized text + tool traces.
-5. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
+4. Filter unsupported Hermes skills/toolsets against the host runtime before passing `-s/-t`.
+5. Return normalized text + tool traces.
+6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
 
 ## Paperclip runtime considerations
 

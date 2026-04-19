@@ -11,8 +11,13 @@ If `hermes` is already installed on the host, the plugin can use it directly via
 ```json
 {
   "gatewayMode": "auto",
-  "hermesCommand": "hermes",
-  "hermesWorkingDirectory": "/root/hermes-agent"
+  "hermesCommand": "/usr/local/bin/hermes",
+  "hermesWorkingDirectory": "/root/hermes-agent",
+  "defaultProfileId": "default",
+  "defaultProvider": "auto",
+  "defaultModel": "MiniMax-M2.7",
+  "defaultEnabledSkills": [],
+  "defaultToolsets": ["web", "file", "vision"]
 }
 ```
 
@@ -82,8 +87,13 @@ pnpm paperclipai plugin install /root/projects/paperclip-master-chat-plugin
 ```json
 {
   "gatewayMode": "auto",
-  "hermesCommand": "hermes",
-  "hermesWorkingDirectory": "/root/hermes-agent"
+  "hermesCommand": "/usr/local/bin/hermes",
+  "hermesWorkingDirectory": "/root/hermes-agent",
+  "defaultProfileId": "default",
+  "defaultProvider": "auto",
+  "defaultModel": "MiniMax-M2.7",
+  "defaultEnabledSkills": [],
+  "defaultToolsets": ["web", "file", "vision"]
 }
 ```
 
@@ -100,6 +110,8 @@ Or, for the bundled local adapter service:
 ## Why this is useful
 
 Reusing the local installations means:
+
+- the plugin can probe the host Hermes skill/tool catalogs and skip incompatible preferences automatically
 
 - no duplicate Hermes packaging just for the plugin
 - no extra adapter service required for trusted single-host deployments
