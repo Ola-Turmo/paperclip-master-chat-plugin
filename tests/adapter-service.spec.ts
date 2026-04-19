@@ -1,5 +1,6 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited } from "../src/adapter-service.js";
+import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited, verifySignedRequest } from "../src/adapter-service.js";
 import type { HermesGatewayPayload } from "../src/hermes/payload.js";
 
 function samplePayload(): HermesGatewayPayload {
@@ -82,6 +83,7 @@ describe("adapter service helpers", () => {
       authHeaderName: "authorization",
       timeoutMs: 45_000,
       maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
     });
     expect(expected).toBe("Bearer secret-token");
     expect(isAuthorized({ authorization: expected }, {
@@ -96,6 +98,7 @@ describe("adapter service helpers", () => {
       authHeaderName: "authorization",
       timeoutMs: 45_000,
       maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
     })).toBe(true);
   });
 
@@ -120,6 +123,7 @@ describe("adapter service helpers", () => {
       authHeaderName: "authorization",
       timeoutMs: 45_000,
       maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
     }, samplePayload());
 
     expect(invocation.invocation.args).not.toContain("-s");
@@ -148,6 +152,41 @@ describe("adapter service helpers", () => {
       authHeaderName: "authorization",
       timeoutMs: 45_000,
       maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
     })).toBe(false);
+  });
+
+  it("accepts signed adapter requests once and rejects replayed nonces", () => {
+    const config = {
+      port: 8788,
+      host: "127.0.0.1",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "auto",
+      defaultModel: "anthropic/claude-sonnet-4",
+      authToken: "secret-token",
+      authHeaderName: "authorization",
+      timeoutMs: 45_000,
+      maxRequestBodyBytes: 15_000_000,
+      maxClockSkewMs: 300_000,
+    } as const;
+    const body = "{\"ok\":true}";
+    const date = new Date("2026-04-19T07:20:00.000Z").toISOString();
+    const nonce = "nonce-1";
+    const signature = createHmac("sha256", config.authToken)
+      .update(["POST", "/sessions/continue", date, nonce, body].join("\n"))
+      .digest("hex");
+
+    const headers = {
+      authorization: "Bearer secret-token",
+      "x-master-chat-date": date,
+      "x-master-chat-nonce": nonce,
+      "x-master-chat-signature": signature,
+    };
+
+    const seenNonces = new Map<string, number>();
+    expect(verifySignedRequest(headers, config, "POST", "/sessions/continue", body, seenNonces, Date.parse(date))).toEqual({ ok: true });
+    expect(verifySignedRequest(headers, config, "POST", "/sessions/continue", body, seenNonces, Date.parse(date))).toEqual({ ok: false, error: "replayed_signature" });
   });
 });
