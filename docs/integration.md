@@ -11,10 +11,8 @@ The worker shells out to the configured Hermes binary and passes:
 - the chosen Hermes profile (`-p <profile>`)
 - provider override (`--provider`)
 - model override (`-m`)
-- enabled toolsets (`-t`)
-- enabled skills (`-s`)
 - `--resume <sessionId>` when a durable Hermes session is already known
-- a normalized Paperclip-aware prompt assembled from thread scope and history
+- a normalized Paperclip-aware prompt assembled from thread scope and history, including the selected skill/toolset hints for routing context
 
 Representative invocation:
 
@@ -23,8 +21,6 @@ hermes -p paperclip-master chat -Q --source tool \
   --provider openrouter \
   -m anthropic/claude-sonnet-4 \
   --resume sess_existing_optional \
-  -t web,file,paperclip-context \
-  -s paperclip-search,issue-summarize \
   -q "<normalized Paperclip scope + history prompt>"
 ```
 
@@ -112,6 +108,31 @@ Request body shape:
   ]
 }
 ```
+
+### 3. Bundled local adapter service
+
+This repo now ships a small Node-based adapter service at `dist/adapter-service.js`.
+
+It is useful when you want:
+
+- the stronger process boundary of HTTP mode,
+- auth-protected plugin-to-adapter traffic,
+- host-local reuse of the already installed Hermes CLI,
+- richer structured metadata than the direct CLI path.
+
+Start it like this:
+
+```bash
+MASTER_CHAT_ADAPTER_TOKEN=change-me \
+MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
+MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+pnpm adapter:start
+```
+
+The service exposes:
+
+- `GET /health`
+- `POST /sessions/continue`
 
 #### Response
 

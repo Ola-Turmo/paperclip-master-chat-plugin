@@ -32,6 +32,13 @@ function checkPort(port) {
 
 const hermesCommand = shellOutput("bash", ["-lc", "command -v hermes || true"]);
 const hermesVersion = hermesCommand ? shellOutput(hermesCommand, ["--version"]) : "";
+const hermesProfiles = hermesCommand ? shellOutput(hermesCommand, ["profile", "list"]) : "";
+const activeProfileLine = hermesProfiles
+  .split("\n")
+  .map((line) => line.trim())
+  .find((line) => line.startsWith("◆"));
+const activeProfile = activeProfileLine ? activeProfileLine.replace(/^◆\s*/, "").split(/\s{2,}/)[0] : "";
+const activeModel = activeProfileLine ? activeProfileLine.replace(/^◆\s*/, "").split(/\s{2,}/)[1] ?? "" : "";
 const hermesRepo = existsSync("/root/hermes-agent") ? "/root/hermes-agent" : null;
 const paperclipRepo = existsSync("/root/work/paperclip") ? "/root/work/paperclip" : null;
 const pluginInstallCommand = paperclipRepo
@@ -42,6 +49,8 @@ const status = {
   repoRoot,
   hermesCommand: hermesCommand || null,
   hermesVersion: hermesVersion || null,
+  hermesActiveProfile: activeProfile || null,
+  hermesActiveModel: activeModel || null,
   hermesRepo,
   paperclipRepo,
   hermesWebUi8787: await checkPort(8787),
@@ -51,6 +60,9 @@ const status = {
     hermesCommand: hermesCommand || "hermes",
     hermesWorkingDirectory: hermesRepo || "",
     hermesBaseUrl: "",
+    defaultProfileId: activeProfile || "paperclip-master",
+    defaultProvider: activeProfile ? "auto" : "openrouter",
+    defaultModel: activeModel || "anthropic/claude-sonnet-4",
   },
   pluginInstallCommand,
 };

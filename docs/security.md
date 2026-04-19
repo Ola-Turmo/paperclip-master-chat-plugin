@@ -18,6 +18,7 @@ This plugin follows the current Paperclip alpha plugin model:
 - retry replays only the failed assistant continuation instead of duplicating the user turn
 - tool traces are redacted before persistence when `redactToolPayloads=true`
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
+- the bundled local adapter service requires the configured auth header/token before it will continue sessions
 
 ## Recommended controls
 

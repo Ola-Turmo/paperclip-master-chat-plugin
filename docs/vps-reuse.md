@@ -18,6 +18,15 @@ If `hermes` is already installed on the host, the plugin can use it directly via
 
 `gatewayMode=auto` prefers the local CLI/runtime first, so you do not need a separate adapter service just to get the plugin talking to Hermes.
 
+If you want an HTTP boundary while still reusing the same local Hermes install, run the bundled adapter service:
+
+```bash
+MASTER_CHAT_ADAPTER_TOKEN=change-me \
+MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
+MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+pnpm adapter:start
+```
+
 ### Paperclip
 
 If the Paperclip repo already exists locally, you can install the plugin into that checkout from a **local path**.
@@ -75,6 +84,16 @@ pnpm paperclipai plugin install /root/projects/paperclip-master-chat-plugin
   "gatewayMode": "auto",
   "hermesCommand": "hermes",
   "hermesWorkingDirectory": "/root/hermes-agent"
+}
+```
+
+Or, for the bundled local adapter service:
+
+```json
+{
+  "gatewayMode": "http",
+  "hermesBaseUrl": "http://127.0.0.1:8788",
+  "hermesAuthToken": "change-me"
 }
 ```
 

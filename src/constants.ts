@@ -34,14 +34,9 @@ export const ACTION_KEYS = {
 
 export const STREAM_PREFIX = "master-chat";
 
-export const DEFAULT_SKILLS = [
-  "paperclip-search",
-  "issue-summarize",
-  "image-analyze",
-  "activity-digest",
-] as const;
+export const DEFAULT_SKILLS = [] as const;
 
-export const DEFAULT_HERMES_TOOLSETS = ["web", "file", "paperclip-context"] as const;
+export const DEFAULT_HERMES_TOOLSETS = ["web", "file", "vision"] as const;
 
 export const DEFAULT_PLUGIN_TOOLS = [
   "paperclip.dashboard",

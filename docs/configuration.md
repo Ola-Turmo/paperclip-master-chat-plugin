@@ -16,8 +16,8 @@ The plugin uses manifest-based instance configuration.
 | `defaultProfileId` | string | `paperclip-master` | Default Hermes profile identifier. |
 | `defaultProvider` | string | `openrouter` | Default Hermes provider label. |
 | `defaultModel` | string | `anthropic/claude-sonnet-4` | Default Hermes model label. |
-| `defaultEnabledSkills` | string[] | built-in list | Default skill toggles shown in the UI and forwarded to Hermes. |
-| `defaultToolsets` | string[] | built-in list | Default Hermes toolset policy. |
+| `defaultEnabledSkills` | string[] | built-in list | Default skill toggles shown in the UI. CLI mode keeps them as prompt hints; HTTP mode can forward them to an adapter. |
+| `defaultToolsets` | string[] | built-in list | Default Hermes toolset policy. CLI mode keeps them as prompt hints for compatibility. |
 | `availablePluginTools` | string[] | built-in list | Allowed Paperclip/plugin tool descriptors attached to the Hermes request. |
 | `maxHistoryMessages` | number | `24` | Maximum number of recent messages included in each Hermes request. |
 | `allowInlineImageData` | boolean | `true` | Allows inline image data URLs from the browser composer. |
@@ -65,6 +65,17 @@ The plugin uses manifest-based instance configuration.
 }
 ```
 
+### Host-local bundled adapter service
+
+```json
+{
+  "gatewayMode": "http",
+  "hermesBaseUrl": "http://127.0.0.1:8788",
+  "hermesAuthToken": "replace-me",
+  "hermesAuthHeaderName": "authorization"
+}
+```
+
 ### Force the local CLI explicitly
 
 ```json
@@ -84,3 +95,8 @@ The plugin uses manifest-based instance configuration.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
 - Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
+- Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.
+
+## CLI compatibility note
+
+When `gatewayMode` is `cli` or `auto` and the local Hermes CLI is selected, the plugin treats configured skills and toolsets as prompt context instead of strict `hermes chat -s/-t` flags. This avoids hard failures on VPS Hermes installs whose local skill catalogs differ from the UI defaults.

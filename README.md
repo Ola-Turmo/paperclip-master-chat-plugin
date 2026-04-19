@@ -13,6 +13,7 @@ The plugin is intentionally aligned with Paperclip's current product boundary: P
   - a deterministic `mock` gateway for local development/tests
   - an `http` gateway mode for an external Hermes adapter service with required auth headers
   - a `cli` mode for explicitly shelling out to the local Hermes binary
+  - a bundled local adapter service (`dist/adapter-service.js`) for authenticated host-local HTTP mediation
 - **Plugin-owned thread store** persisted via Paperclip plugin state, now versioned for migration safety
 - **Typed multimodal payload builder** that converts message history into Hermes-friendly content blocks
 - **Docs** for architecture, configuration, integration, security, VPS reuse, and the repo improvement roadmap
@@ -121,6 +122,8 @@ The worker probes the configured local Hermes CLI first. If that probe fails, it
 
 Force local CLI execution even outside auto-detection. Useful when you want predictable host-local routing through the already installed Hermes profile and model setup.
 
+In CLI mode, Paperclip skill and toolset toggles stay in the generated prompt as routing hints. They are not forwarded as strict `hermes chat -s/-t` flags, which keeps the plugin compatible with host-local Hermes installs that do not expose the same skill catalog.
+
 ### `gatewayMode=http`
 
 Send normalized payloads to an external adapter service:
@@ -130,6 +133,27 @@ POST {hermesBaseUrl}/sessions/continue
 ```
 
 HTTP mode now **fails closed** unless adapter auth is configured.
+
+### Bundled local adapter service
+
+You can run the repo's local Hermes adapter on the VPS:
+
+```bash
+MASTER_CHAT_ADAPTER_TOKEN=change-me \
+MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
+MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+pnpm adapter:start
+```
+
+Then point the plugin at it:
+
+```json
+{
+  "gatewayMode": "http",
+  "hermesBaseUrl": "http://127.0.0.1:8788",
+  "hermesAuthToken": "change-me"
+}
+```
 
 ### Session continuity semantics
 

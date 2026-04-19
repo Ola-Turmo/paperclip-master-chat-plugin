@@ -8,6 +8,7 @@
     "build:rollup": "rollup -c",
     "dev": "node ./esbuild.config.mjs --watch",
     "dev:ui": "paperclip-plugin-dev-server --root . --ui-dir dist/ui --port 4177",
+    "adapter:start": "node ./dist/adapter-service.js",
     "test": "vitest run --config ./vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "audit:prod": "pnpm audit --prod --audit-level moderate",

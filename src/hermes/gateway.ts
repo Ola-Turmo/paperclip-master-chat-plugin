@@ -10,8 +10,9 @@ import type {
   HermesToolTrace,
   MasterChatPluginConfig,
 } from "../types.js";
-import { buildHermesCliInvocation } from "./cli.js";
+import { buildHermesCliInvocation, buildHermesCliPrompt } from "./cli.js";
 import { buildHermesGatewayPayload } from "./payload.js";
+import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./capabilities.js";
 
 export interface HermesGateway {
   sendMessage(
@@ -291,13 +292,39 @@ export class CliHermesGateway implements HermesGateway {
       throw configError("Hermes CLI gateway mode requires hermesCommand");
     }
 
-    const invocation = buildHermesCliInvocation(request, this.config);
+    let warnings: string[] = [];
+    let effectiveSkillPolicy = request.skillPolicy;
+
+    try {
+      const inventory = await loadHermesCapabilityInventory(this.config);
+      const sanitized = sanitizeSkillPolicy(request.skillPolicy, inventory);
+      effectiveSkillPolicy = sanitized.skillPolicy;
+      warnings = sanitized.warnings;
+    } catch {
+      const sanitized = sanitizeSkillPolicy(request.skillPolicy);
+      effectiveSkillPolicy = sanitized.skillPolicy;
+      warnings = sanitized.warnings;
+    }
+
+    const invocation = buildHermesCliInvocation({
+      ...request,
+      skillPolicy: effectiveSkillPolicy,
+    }, this.config);
+    invocation.args[invocation.args.length - 1] = buildHermesCliPrompt(request, effectiveSkillPolicy, warnings);
 
     options?.onEvent?.({
       type: "status",
       stage: "started",
       message: `Running local Hermes CLI via ${invocation.command}`,
     });
+
+    for (const warning of warnings) {
+      options?.onEvent?.({
+        type: "status",
+        stage: "tool_result",
+        message: warning,
+      });
+    }
 
     const { stdout, stderr } = await runCommand(invocation.command, invocation.args, invocation.cwd, Math.max(10_000, this.config.gatewayRequestTimeoutMs));
     const combinedOutput = `${stdout}\n${stderr}`.trim();

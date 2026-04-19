@@ -130,9 +130,47 @@ describe("Hermes CLI helpers", () => {
     expect(invocation.args).toContain("-Q");
     expect(invocation.args).toContain("--resume");
     expect(invocation.args).toContain("sess_1");
-    expect(invocation.args).toContain("-t");
-    expect(invocation.args).toContain("web,file");
-    expect(invocation.args).toContain("-s");
-    expect(invocation.args).toContain("paperclip-search,issue-summarize");
+    expect(invocation.args).not.toContain("--provider");
+    expect(invocation.args).not.toContain("-m");
+    expect(invocation.args).not.toContain("-t");
+    expect(invocation.args).not.toContain("-s");
+    expect(invocation.args.at(-1)).toContain("Hermes capability preferences: paperclip-search, issue-summarize");
+    expect(invocation.args.at(-1)).toContain("Hermes runtime tools requested: web, file");
+  });
+
+  it("passes provider and model only when they override the configured defaults", () => {
+    const request = sampleRequest();
+    request.session.provider = "anthropic";
+    request.session.model = "claude-4.5-sonnet";
+    const config: MasterChatPluginConfig = {
+      gatewayMode: "auto",
+      hermesBaseUrl: "",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "/root/hermes-agent",
+      hermesAuthToken: "",
+      hermesAuthHeaderName: "authorization",
+      gatewayRequestTimeoutMs: 45_000,
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "openrouter",
+      defaultModel: "anthropic/claude-sonnet-4",
+      defaultEnabledSkills: ["paperclip-search"],
+      defaultToolsets: ["web"],
+      availablePluginTools: ["paperclip.dashboard"],
+      maxHistoryMessages: 24,
+      allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
+      enableActivityLogging: true,
+    };
+
+    const invocation = buildHermesCliInvocation(request, config);
+    expect(invocation.args).toContain("--provider");
+    expect(invocation.args).toContain("anthropic");
+    expect(invocation.args).toContain("-m");
+    expect(invocation.args).toContain("claude-4.5-sonnet");
   });
 });
