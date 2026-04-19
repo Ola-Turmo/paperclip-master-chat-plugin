@@ -170,6 +170,7 @@ scripts/*                 VPS reuse detection helpers
 - [Integration](./docs/integration.md)
 - [Security and caveats](./docs/security.md)
 - [VPS reuse guide](./docs/vps-reuse.md)
+- [Repository improvement PRD](./docs/prd-repo-improvements.md)
 
 ## Verification
 
