@@ -22,6 +22,7 @@ If `hermes` is already installed on the host, the plugin can use it directly via
 ```
 
 `gatewayMode=auto` prefers the local CLI/runtime first, so you do not need a separate adapter service just to get the plugin talking to Hermes.
+The same local Hermes install is also reused for image-analysis turns (`hermes chat --image ...`) so screenshots and diagrams get cached summaries/OCR text before the main chat turn is sent.
 
 If you expose the bundled adapter on `127.0.0.1`, no extra trusted-host flag is required. Loopback adapter URLs are allowed automatically. Only non-loopback RFC1918/private adapter hosts require `allowPrivateAdapterHosts=true`.
 
@@ -120,14 +121,14 @@ Or, for the bundled local adapter service:
 Only add `allowPrivateAdapterHosts: true` when the adapter lives on a trusted internal RFC1918 address that is not loopback.
 Keep `allowInsecureHttpAdapters: false` unless you are deliberately using a trusted non-loopback adapter over plain HTTP. Remote or cross-host adapters should stay on HTTPS by default.
 
-`pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and verifies a live HTTP turn through Paperclip too.
+`pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, sends a real image attachment through the live plugin, verifies Hermes-backed image analysis completes, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and verifies a live HTTP turn through Paperclip too.
 
 ## Why this is useful
 
 Reusing the local installations means:
 
 - the plugin can probe the host Hermes skill/tool catalogs and skip incompatible preferences automatically
-
+- the plugin can run local image-analysis/OCR turns without introducing another vision service
 - no duplicate Hermes packaging just for the plugin
 - no extra adapter service required for trusted single-host deployments
 - easier iteration against the existing Paperclip checkout on the VPS

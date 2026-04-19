@@ -7,15 +7,18 @@ The plugin is intentionally aligned with Paperclip's current product boundary: P
 ## What ships in this repo
 
 - **Plugin worker** with scoped thread actions, retry-safe assistant continuation, attachment validation, typed error mapping, and in-flight protection
-- **Paperclip-native UI** with a thread rail, scoped context controls, inline image attachments, live stream rendering, warning surfaces, dashboard widget, sidebar entry, and issue detail tab
+- **Paperclip-native UI** with a thread rail, scoped context controls, image attachments, live stream rendering, warning surfaces, dashboard widget, sidebar entry, and issue detail tab
 - **Hermes integration seam** with:
   - true `auto` detection that probes local CLI availability before falling back
   - a deterministic `mock` gateway for local development/tests
   - an `http` gateway mode for an external Hermes adapter service with required auth headers
   - a `cli` mode for explicitly shelling out to the local Hermes binary
   - a bundled local adapter service (`dist/adapter-service.js`) for authenticated host-local HTTP mediation with constant-time auth checks and bounded request bodies
+- **Filesystem-backed attachment storage** with lazy hydration so plugin state no longer needs to persist large inline image blobs by default
+- **Vision/OCR enrichment** that reuses Hermes itself to produce cached image summaries, extracted text, and safer text fallbacks for multimodal turns
+- **Synthetic continuity snapshots** that summarize truncated thread history when Hermes durability is unavailable
 - **Plugin-owned thread store** persisted via Paperclip plugin state, now versioned for migration safety
-- **Typed multimodal payload builder** that converts message history into Hermes-friendly content blocks
+- **Typed multimodal payload builder** that converts message history into Hermes-friendly content blocks plus image-analysis text fallbacks
 - **Docs** for architecture, configuration, integration, security, VPS reuse, and the repo improvement roadmap
 - **Tests + CI** for payload transformation, CLI prompt building, gateway selection, worker behavior, and UI helpers
 
@@ -27,6 +30,7 @@ flowchart LR
   UI --> Bridge[Paperclip bridge]
   Bridge --> Worker[Plugin worker]
   Worker --> Store[(Plugin state)]
+  Worker --> Files[(Filesystem attachment store)]
   Worker --> Hermes[Hermes gateway seam]
   Hermes --> Local[Existing local Hermes CLI/runtime]
   Hermes --> Adapter[External adapter service]
@@ -35,16 +39,18 @@ flowchart LR
 
 ### Current alpha/runtime reality
 
-Paperclip's current plugin runtime does **not** expose a stable `ctx.assets` API. To keep the plugin functional today, this repo ships **inline image attachment support** (via browser `FileReader` data URLs) and documents how to migrate to Paperclip asset persistence once the host runtime exposes that capability.
+Paperclip's current plugin runtime does **not** expose a stable `ctx.assets` API. To keep the plugin functional today, this repo persists images to a **host-local filesystem attachment store** by default, hydrates them lazily for UI/Hermes use, and documents how to migrate to Paperclip asset persistence once the host runtime exposes that capability.
 
 ## Features
 
 - Company-scoped thread list and chat page
 - Project / issue / agent scope selection with scope validation against company-scoped records
 - Skill toggles and Hermes toolset policy alignment
-- Inline image previews plus attachment count/type/size enforcement with server-side byte recomputation from the actual data URL
+- Filesystem-backed image persistence with lazy hydration plus attachment count/type/size enforcement and server-side byte recomputation from the actual data URL
+- Hermes-powered vision/OCR analysis for images, including cached summaries, extracted text, and notable details rendered in the UI
 - Message length enforcement with matching worker + UI validation
 - Retry-safe assistant continuation that does **not** duplicate the user turn
+- Synthetic continuity summaries when older thread history is truncated or Hermes does not provide durability
 - Live stream text/status rendering instead of raw JSON
 - Activity logging + metric emission on successful sends and typed error metrics on failures
 - Dashboard widget and issue detail entry point
@@ -70,6 +76,7 @@ pnpm audit:prod
 ```bash
 pnpm vps:check
 pnpm vps:smoke
+pnpm remote:smoke:local
 ```
 
 On this VPS, the script detects whether:
@@ -78,7 +85,9 @@ On this VPS, the script detects whether:
 - `/root/work/paperclip` exists as a local Paperclip checkout
 - local Hermes ports such as `8787` or `8642` are listening
 
-`pnpm vps:smoke` goes further: it rebuilds the repo, refreshes the plugin inside the local Paperclip checkout, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and then verifies a live HTTP turn through Paperclip as well.
+`pnpm vps:smoke` goes further: it rebuilds the repo, refreshes the plugin inside the local Paperclip checkout, sends a real image attachment through the live Paperclip plugin, verifies Hermes-backed image analysis completes, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and then verifies a live HTTP turn through Paperclip as well.
+
+`pnpm remote:smoke:local` goes one step further for the external-adapter path: it starts the bundled adapter, places an ephemeral self-signed HTTPS reverse proxy in front of it, and exercises the signed remote adapter contract over HTTPS. By default it verifies `POST /sessions/continue` end to end and can optionally probe `POST /images/analyze` too by setting `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` (or require it with `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true`). Use `pnpm remote:smoke` when you want to point the same signed smoke client at a real remote adapter URL.
 
 ### 4) Build for Paperclip
 
@@ -93,6 +102,8 @@ Artifacts land in `dist/` and can be installed into a Paperclip instance as a lo
 The plugin exposes instance config fields through the Paperclip manifest schema, including:
 
 - `gatewayMode`: `auto`, `mock`, `http`, or `cli`
+- `attachmentStorageMode`: `filesystem` or `inline`
+- `attachmentStorageDirectory`: host-local directory for persisted image bytes
 - `hermesCommand`: command/path for the local Hermes CLI
 - `hermesWorkingDirectory`: optional cwd for the local Hermes checkout/runtime
 - `hermesBaseUrl`: base URL for an external Hermes adapter service when `gatewayMode=http`
@@ -109,6 +120,8 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `availablePluginTools`
 - `maxHistoryMessages`
 - `maxMessageChars`
+- `enableVisionAnalysis`
+- `imageAnalysisMaxChars`
 - `allowInlineImageData`
 - `maxAttachmentCount`
 - `maxAttachmentBytesPerFile`
@@ -144,7 +157,23 @@ HTTP mode now **fails closed** unless adapter auth is configured.
 
 Loopback adapter URLs such as `http://127.0.0.1:8788` use direct Node `fetch` automatically so same-VPS deployments can work even when Paperclip's guarded HTTP client blocks private ranges. Non-loopback RFC1918/private adapter hosts now require explicit `allowPrivateAdapterHosts=true`, and non-loopback `http://` adapter URLs require explicit `allowInsecureHttpAdapters=true`.
 
-The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`), requires `application/json`, validates the incoming payload shape, and rejects oversized requests with `413`. Worker-to-adapter HTTP requests now include timestamped HMAC signature headers (`x-master-chat-date`, `x-master-chat-nonce`, `x-master-chat-signature`) so the bundled adapter can reject stale or replayed requests.
+The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`), requires `application/json`, validates the incoming payload shape, and rejects oversized requests with `413`. Worker-to-adapter HTTP requests now include timestamped HMAC signature headers (`x-master-chat-date`, `x-master-chat-nonce`, `x-master-chat-signature`) so the bundled adapter can reject stale or replayed requests. The same adapter also exposes `POST /images/analyze` so HTTP deployments can reuse Hermes for OCR/vision enrichment before the main chat turn is persisted.
+
+For cross-host HTTPS validation, run either:
+
+```bash
+pnpm remote:smoke:local
+```
+
+or:
+
+```bash
+MASTER_CHAT_REMOTE_ADAPTER_URL=https://your-adapter.example.com \
+MASTER_CHAT_REMOTE_ADAPTER_TOKEN=replace-me \
+pnpm remote:smoke
+```
+
+The remote smoke client signs requests exactly like the worker and always verifies `/health` plus `/sessions/continue`. Set `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` to probe `/images/analyze` too, or `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true` to make image-analysis success mandatory.
 
 ### Bundled local adapter service
 
@@ -178,6 +207,7 @@ When the bundled adapter is reusing the same host defaults as the Paperclip plug
 - **CLI mode** resumes existing Hermes sessions with `--resume <sessionId>` when the thread already has a real session ID.
 - **New CLI conversations** start `stateless`, but they are upgraded to `durable` automatically once Hermes returns a real session ID.
 - **HTTP conversations** also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits an explicit `continuationMode`.
+- **When history is truncated or Hermes remains stateless**, the worker includes a deterministic synthetic continuity summary instead of pretending durable memory exists.
 
 ## Repository layout
 
@@ -186,8 +216,10 @@ src/constants.ts          plugin IDs, routes, defaults
 src/types.ts              shared domain and gateway types
 src/errors.ts             typed runtime error helpers
 src/domain/store.ts       plugin-owned state store helpers
+src/attachments.ts        filesystem persistence + hydration for image attachments
+src/continuity.ts         synthetic continuity snapshot builder
 src/paperclip/context.ts  Paperclip scope/bootstrap helpers
-src/hermes/*              payload builder + CLI/HTTP gateway implementations
+src/hermes/*              payload builder + CLI/HTTP gateway implementations + image analysis helpers
 src/worker.ts             plugin worker
 src/manifest.ts           plugin manifest
 src/ui/*                  plugin React UI
@@ -224,6 +256,7 @@ pnpm build
 pnpm audit:prod
 pnpm vps:check
 pnpm vps:smoke
+pnpm remote:smoke:local
 ```
 
 ## Status

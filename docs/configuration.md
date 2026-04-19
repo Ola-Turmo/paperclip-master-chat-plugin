@@ -7,6 +7,8 @@ The plugin uses manifest-based instance configuration.
 | Field | Type | Default | Purpose |
 |---|---|---:|---|
 | `gatewayMode` | `auto` \| `mock` \| `http` \| `cli` | `auto` | Chooses the Hermes integration path. `auto` probes the local CLI before trying the authenticated HTTP adapter. |
+| `attachmentStorageMode` | `filesystem` \| `inline` | `filesystem` | Controls whether images are persisted to the host filesystem or left inline in plugin state. |
+| `attachmentStorageDirectory` | string | `.paperclip-master-chat-attachments` | Host-local root directory for filesystem-backed image persistence. |
 | `hermesBaseUrl` | string | `""` | Base URL for an external adapter service when `gatewayMode=http`. |
 | `hermesCommand` | string | `hermes` | Command or absolute path for the local Hermes CLI. |
 | `hermesWorkingDirectory` | string | `""` | Optional cwd for local Hermes execution, useful when reusing a checked-out Hermes repo on the VPS. |
@@ -23,6 +25,8 @@ The plugin uses manifest-based instance configuration.
 | `availablePluginTools` | string[] | built-in list | Allowed Paperclip/plugin tool descriptors attached to the Hermes request. |
 | `maxHistoryMessages` | number | `24` | Maximum number of recent messages included in each Hermes request. |
 | `maxMessageChars` | number | `12000` | Maximum trimmed text length accepted for one user turn. Enforced in both the UI and worker. |
+| `enableVisionAnalysis` | boolean | `true` | Runs an image-only Hermes vision/OCR pass before persisting image turns so chat requests can include safer textual fallbacks. |
+| `imageAnalysisMaxChars` | number | `4000` | Caps persisted vision/OCR summary + extracted text length per image. |
 | `allowInlineImageData` | boolean | `true` | Allows inline image data URLs from the browser composer. |
 | `maxAttachmentCount` | number | `4` | Maximum images accepted in one turn. |
 | `maxAttachmentBytesPerFile` | number | `5000000` | Per-file inline image limit. |
@@ -114,24 +118,33 @@ The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes hos
 
 - Use `gatewayMode=auto` when the plugin and Hermes run on the same trusted VPS.
 - Use `gatewayMode=http` when you want a dedicated adapter boundary, stronger service auth, or richer structured traces.
+- Keep `attachmentStorageMode=filesystem` for normal deployments so plugin state does not accumulate large inline image blobs.
+- Keep `attachmentStorageDirectory` on durable local storage if thread history must survive host restarts.
 - Keep `allowPrivateAdapterHosts=false` unless you explicitly need a non-loopback RFC1918 adapter URL. Loopback URLs already work without this flag.
 - Keep `allowInsecureHttpAdapters=false` unless the adapter is on a trusted internal network and HTTPS is genuinely unavailable.
 - Keep `availablePluginTools` tightly allowlisted.
 - Prefer environment- or instance-specific routing in the adapter service rather than exposing provider secrets to the plugin UI.
+- Keep `enableVisionAnalysis=true` unless you have a strict cost/latency reason to disable OCR/description enrichment.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
 - Tune `maxMessageChars` alongside attachment limits if you need tighter anti-abuse budgets.
+- Tune `imageAnalysisMaxChars` downward if OCR output or image descriptions should be aggressively capped before persistence.
 - Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.
-- Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, and verifies both CLI and HTTP paths end to end.
+- Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, sends a real image through the plugin, and verifies both CLI and HTTP paths end to end.
+- Run `pnpm remote:smoke:local` when you want a local HTTPS rehearsal of the signed remote-adapter contract without needing a second host; it always verifies the main continuation endpoint and can optionally probe image analysis with `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true`.
+- Run `pnpm remote:smoke` with `MASTER_CHAT_REMOTE_ADAPTER_URL` and `MASTER_CHAT_REMOTE_ADAPTER_TOKEN` when you want to verify a real remote HTTPS adapter deployment. Add `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` or `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true` when the target runtime should also satisfy the signed image-analysis path.
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
 - Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.
 - The bundled adapter honors `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES` (default `15000000`) so authenticated callers cannot stream arbitrarily large JSON payloads into the adapter process.
 - The bundled adapter also honors `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default `300000`) for signed request freshness checks.
+- Cross-host adapter deployments should prefer trusted CA-backed HTTPS. The optional smoke client supports self-signed rehearsal via `MASTER_CHAT_REMOTE_ALLOW_INSECURE_TLS=true`, but production should rely on real trust roots instead.
 
 ## Validation behavior
 
 The worker validates config updates before accepting them:
 
 - `gatewayMode=http` requires both `hermesBaseUrl` and `hermesAuthToken`
+- `attachmentStorageMode` must be either `filesystem` or `inline`
+- `attachmentStorageDirectory` must not be blank
 - `hermesBaseUrl` must be an absolute `http` or `https` URL
 - `hermesAuthHeaderName` must be a syntactically valid HTTP header name
 - non-loopback adapter URLs must use `https` unless `allowInsecureHttpAdapters=true`
@@ -139,6 +152,7 @@ The worker validates config updates before accepting them:
 - RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
 - `maxTotalAttachmentBytes` must be at least `maxAttachmentBytesPerFile`
 - `maxMessageChars` must be at least `1`
+- `imageAnalysisMaxChars` must be at least `256`
 - explicit blank or malformed `hermesAuthHeaderName` values and explicit `maxMessageChars <= 0` are rejected instead of being silently coerced to defaults
 - invalid runtime config changes are ignored instead of replacing the last known-safe worker config
 - the bundled adapter expects timestamped HMAC signature headers on `/sessions/continue` and rejects stale or replayed nonces

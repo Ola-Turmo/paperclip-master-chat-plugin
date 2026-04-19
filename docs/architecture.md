@@ -36,6 +36,8 @@ The worker owns:
 
 - thread CRUD
 - skill + scope policy normalization
+- filesystem-backed attachment persistence + hydration
+- cached image-analysis/OCR enrichment
 - Hermes request construction
 - activity/metrics emission
 - SSE stream events during turns
@@ -56,7 +58,7 @@ The page now renders explicit warning/error/streaming states and disables scope 
 
 ### 3. Thread store
 
-Current Paperclip alpha supports plugin state, so this repo persists a company-scoped `MasterChatStore` object under one state key. The store is now schema-versioned to make future migrations explicit.
+Current Paperclip alpha supports plugin state, so this repo persists a company-scoped `MasterChatStore` object under one state key. The store is schema-versioned, and image bytes are persisted separately via a filesystem attachment backend so plugin state does not need to retain large inline payloads by default.
 
 ### 4. Hermes seam
 
@@ -78,24 +80,29 @@ The worker never lets the browser talk directly to Hermes.
 
 1. User selects project / issue / agents / skills.
 2. UI calls `send-message` with a request ID.
-3. Worker validates scope and attachment limits, stores the user turn, and acquires the per-thread in-flight slot.
-4. Worker loads company/project/issue/agent context with paginated catalog fetches.
-5. Worker builds a normalized Hermes request aligned with the current thread tool policy.
-6. Selected gateway returns assistant text + optional tool trace metadata.
-7. Worker redacts tool payloads when configured, persists assistant message parts, and emits stream events.
-8. UI refreshes the thread and shows transcript/tool cards.
+3. Worker validates scope and attachment limits, computes attachment hashes, and acquires the per-thread in-flight slot.
+4. Worker optionally runs Hermes-backed image analysis/OCR, reusing cached results for matching attachments already seen in the thread.
+5. Worker persists attachment bytes to the local filesystem backend, stores the user turn, and loads company/project/issue/agent context with paginated catalog fetches.
+6. Worker builds a normalized Hermes request aligned with the current thread tool policy and includes a synthetic continuity summary when older history is truncated.
+7. Selected gateway returns assistant text + optional tool trace metadata.
+8. Worker redacts tool payloads when configured, persists assistant message parts, and emits stream events.
+9. UI refreshes the thread and shows transcript/tool cards.
 
 ## Multimodal handling
 
-Because Paperclip does not currently ship a stable `ctx.assets` API, this repo uses **inline image attachments** as the working alpha implementation:
+Because Paperclip does not currently ship a stable `ctx.assets` API, this repo uses a **filesystem-backed attachment store** plus inline transport at the bridge boundary:
 
 - browser reads file as a data URL
 - UI and worker enforce MIME and byte limits before forwarding
-- worker stores the attachment metadata with the message
-- HTTP gateway mode strips the `data:` prefix and forwards base64 content blocks
-- CLI gateway mode forwards image metadata in the prompt so the local Hermes agent still receives attachment context even when the CLI path is text-first
+- worker computes a content hash, optionally runs a Hermes image-analysis pass, and persists the binary to local storage
+- thread detail responses hydrate filesystem-backed images back into data URLs only when needed for rendering or Hermes payload construction
+- HTTP gateway mode strips the `data:` prefix and forwards base64 content blocks plus a compact analysis fallback text block
+- CLI gateway mode now has two paths:
+  - a dedicated `hermes chat --image <path>` analysis turn for OCR/detail extraction
+  - the main chat prompt including the cached image-analysis fallback text
+- when older thread history is truncated, Hermes receives a deterministic continuity summary instead of an invented durable-memory claim
 
-This keeps the chat actually usable today while preserving a future migration path to Paperclip asset IDs.
+This keeps the chat actually usable today while materially reducing multimodal and persistence risk, while preserving a future migration path to Paperclip asset IDs.
 
 ## Extension points for production rollout
 

@@ -53,6 +53,8 @@ export const SAFE_INLINE_IMAGE_MIME_TYPES = [
 
 export const DEFAULT_CONFIG = {
   gatewayMode: "auto",
+  attachmentStorageMode: "filesystem",
+  attachmentStorageDirectory: ".paperclip-master-chat-attachments",
   hermesBaseUrl: "",
   hermesCommand: "hermes",
   hermesWorkingDirectory: "",
@@ -69,6 +71,8 @@ export const DEFAULT_CONFIG = {
   availablePluginTools: [...DEFAULT_PLUGIN_TOOLS],
   maxHistoryMessages: 24,
   maxMessageChars: 12_000,
+  enableVisionAnalysis: true,
+  imageAnalysisMaxChars: 4_000,
   allowInlineImageData: true,
   maxAttachmentCount: 4,
   maxAttachmentBytesPerFile: 5_000_000,

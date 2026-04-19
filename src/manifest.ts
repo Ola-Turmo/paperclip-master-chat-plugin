@@ -37,6 +37,17 @@ const manifest: PaperclipPluginManifestV1 = {
         enum: ["auto", "mock", "http", "cli"],
         default: DEFAULT_CONFIG.gatewayMode,
       },
+      attachmentStorageMode: {
+        type: "string",
+        title: "Attachment storage mode",
+        enum: ["filesystem", "inline"],
+        default: DEFAULT_CONFIG.attachmentStorageMode,
+      },
+      attachmentStorageDirectory: {
+        type: "string",
+        title: "Filesystem attachment storage directory",
+        default: DEFAULT_CONFIG.attachmentStorageDirectory,
+      },
       hermesBaseUrl: {
         type: "string",
         title: "Hermes adapter base URL",
@@ -119,6 +130,16 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "number",
         title: "Maximum text characters accepted per turn",
         default: DEFAULT_CONFIG.maxMessageChars,
+      },
+      enableVisionAnalysis: {
+        type: "boolean",
+        title: "Analyze images for OCR and detailed fallback text",
+        default: DEFAULT_CONFIG.enableVisionAnalysis,
+      },
+      imageAnalysisMaxChars: {
+        type: "number",
+        title: "Maximum persisted OCR/vision text characters per image",
+        default: DEFAULT_CONFIG.imageAnalysisMaxChars,
       },
       allowInlineImageData: {
         type: "boolean",

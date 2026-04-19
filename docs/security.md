@@ -13,6 +13,8 @@ This plugin follows the current Paperclip alpha plugin model:
 
 - company/project/issue/agent scope references are validated against company-scoped Paperclip records
 - attachment count/type/per-file-size/total-size limits are enforced in both the UI and worker, and the worker recomputes image byte size from the actual base64 payload instead of trusting client-provided metadata
+- filesystem attachment persistence is the default, reducing long-lived inline blob exposure inside plugin state
+- image analysis results are cached by attachment hash, reducing repeated vision/OCR calls for the same image within a thread
 - inline image data can be disabled with `allowInlineImageData=false`
 - the worker allows only one in-flight send per thread at a time
 - retry replays only the failed assistant continuation instead of duplicating the user turn
@@ -42,12 +44,13 @@ This plugin follows the current Paperclip alpha plugin model:
 9. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
 10. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
 11. **Keep the adapter clock sane** — HMAC freshness checks use `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default 5 minutes), so host time drift can cause legitimate requests to fail.
+12. **Exercise the signed adapter transport before rollout** — use `pnpm remote:smoke` or `pnpm remote:smoke:local` so `/sessions/continue` is validated under the same auth/signature scheme, and enable `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` when the target Hermes runtime should also be expected to pass `/images/analyze`.
 
 ## Current runtime caveats
 
 ### No stable asset API
 
-Paperclip's current plugin authoring guidance says `ctx.assets` is not part of the supported runtime yet. This repo therefore stores inline image payloads with message records for alpha functionality and documents the migration path to asset-backed persistence later.
+Paperclip's current plugin authoring guidance says `ctx.assets` is not part of the supported runtime yet. This repo therefore stores image bytes in a host-local filesystem attachment store by default, hydrates them only when needed for UI/Hermes use, and documents the migration path to asset-backed persistence later.
 
 ### Same-origin plugin UI
 
@@ -65,7 +68,7 @@ This is a feature for a trusted VPS, but it is not the same isolation level as a
 
 ### State storage is simple by design
 
-Using plugin state for thread persistence is appropriate for the current alpha plugin surface and tests, but higher-scale installs may prefer a richer backing store when the host runtime exposes it.
+Using plugin state for thread persistence is appropriate for the current alpha plugin surface and tests, but higher-scale installs may prefer a richer backing store when the host runtime exposes it. The current filesystem attachment backend is intentionally local-host scoped, so shared or ephemeral hosts still need durable storage planning.
 
 ## Honest scope of this repository
 
@@ -79,3 +82,4 @@ Production readiness still depends on:
 - the target Paperclip instance configuration
 - the chosen Hermes integration mode
 - the operator's auth, rate limiting, and observability posture
+- the operator's local storage policy for filesystem-backed image attachments

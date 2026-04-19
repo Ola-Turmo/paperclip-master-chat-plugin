@@ -44,6 +44,11 @@ describe("buildHermesGatewayPayload", () => {
         },
         warnings: [],
       },
+      continuity: {
+        strategy: "recent-history-only",
+        olderMessageCount: 0,
+        totalMessageCount: 1,
+      },
       history: [
         {
           messageId: "msg_1",
@@ -59,6 +64,13 @@ describe("buildHermesGatewayPayload", () => {
               mimeType: "image/png",
               dataUrl: "data:image/png;base64,aGVsbG8=",
               source: "inline",
+              analysis: {
+                status: "complete",
+                summary: "Simple architecture diagram",
+                extractedText: "HELLO",
+                notableDetails: ["Single green node"],
+                generatedAt: "2026-04-19T08:00:00Z",
+              },
             },
           ],
           routing: {
@@ -93,7 +105,11 @@ describe("buildHermesGatewayPayload", () => {
         mimeType: "image/png",
         data: "aGVsbG8=",
         name: "diagram.png",
-        altText: undefined,
+        altText: "Simple architecture diagram",
+      },
+      {
+        type: "text",
+        text: "[image_analysis:diagram.png]\nVision summary: Simple architecture diagram\nExtracted text:\nHELLO\nNotable details: Single green node",
       },
     ]);
   });

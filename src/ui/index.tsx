@@ -95,8 +95,37 @@ async function fileToAttachment(file: File): Promise<InlineImageAttachment> {
 function AttachmentPreview({ attachment, onRemove }: { attachment: InlineImageAttachment; onRemove?: (id: string) => void }) {
   return (
     <div style={{ ...cardStyle, display: "grid", gap: "8px", padding: "10px" }}>
-      <img src={attachment.dataUrl} alt={attachment.altText ?? attachment.name} style={{ width: "100%", maxHeight: "160px", objectFit: "cover", borderRadius: "10px" }} />
+      {attachment.dataUrl ? (
+        <img src={attachment.dataUrl} alt={attachment.altText ?? attachment.name} style={{ width: "100%", maxHeight: "160px", objectFit: "cover", borderRadius: "10px" }} />
+      ) : (
+        <div style={{ ...warningStyle, margin: 0 }}>
+          <strong>Stored on filesystem</strong>
+          <div style={mutedStyle}>Image bytes are retained on the Paperclip host and hydrated lazily for safe rendering.</div>
+        </div>
+      )}
       <div style={mutedStyle}>{attachment.name} · {attachment.mimeType} · {humanBytes(attachment.byteSize ?? 0)}</div>
+      {attachment.analysis?.status === "complete" ? (
+        <div style={{ ...cardStyle, padding: "10px", background: "color-mix(in srgb, #16a34a 10%, transparent)" }}>
+          <strong>Vision analysis</strong>
+          {attachment.analysis.summary ? <div style={{ ...mutedStyle, marginTop: "6px" }}>{attachment.analysis.summary}</div> : null}
+          {attachment.analysis.extractedText ? (
+            <div style={{ ...mutedStyle, marginTop: "6px", whiteSpace: "pre-wrap" }}>
+              <strong>Extracted text:</strong>{"\n"}{attachment.analysis.extractedText}
+            </div>
+          ) : null}
+          {attachment.analysis.notableDetails?.length ? (
+            <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
+              {attachment.analysis.notableDetails.map((detail) => <li key={detail} style={mutedStyle}>{detail}</li>)}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+      {attachment.analysis?.status === "error" ? (
+        <div style={warningStyle}>
+          <strong>Vision analysis unavailable</strong>
+          <div style={mutedStyle}>{attachment.analysis.errorMessage ?? "The image was kept, but no OCR/description could be generated."}</div>
+        </div>
+      ) : null}
       {onRemove ? <button style={buttonStyle} onClick={() => onRemove(attachment.id)}>Remove</button> : null}
     </div>
   );
@@ -596,10 +625,12 @@ function ChatSurface({ forcedIssueId }: { forcedIssueId?: string }) {
                   <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                     <span style={chipStyle}>{scopeSummary(detailData.thread.scope)}</span>
                     {detailData.thread.metadata.gatewayMode ? <span style={chipStyle}>Gateway {detailData.thread.metadata.gatewayMode}</span> : null}
+                    {detailData.thread.metadata.continuityStrategy ? <span style={chipStyle}>Continuity {detailData.thread.metadata.continuityStrategy}</span> : null}
                     {detailData.thread.metadata.lastErrorCode ? <span style={chipStyle}>Last error {detailData.thread.metadata.lastErrorCode}</span> : null}
                     {detailData.context.selectedAgents.map((agent) => <span key={agent.id} style={chipStyle}>{agent.name}</span>)}
                   </div>
                   <div style={mutedStyle}>Catalog coverage: projects {detailData.context.catalog.projects.loaded}, issues {detailData.context.catalog.issues.loaded}, agents {detailData.context.catalog.agents.loaded}</div>
+                  {detailData.thread.metadata.continuitySummary ? <div style={mutedStyle}>Older context: {detailData.thread.metadata.continuitySummary}</div> : null}
                 </div>
                 {detailData.messages.map((message) => <MessageCard key={message.messageId} message={message} />)}
               </div>

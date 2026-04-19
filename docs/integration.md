@@ -13,6 +13,7 @@ The worker shells out to the configured Hermes binary and passes:
 - model override (`-m`)
 - `--resume <sessionId>` when a durable Hermes session is already known
 - a normalized Paperclip-aware prompt assembled from thread scope and history, with unsupported Hermes skills/toolsets filtered out automatically after probing the host install
+- `--image <path>` on dedicated image-analysis turns so Hermes can produce OCR/detail summaries before the chat turn is persisted
 
 Representative invocation:
 
@@ -32,6 +33,7 @@ This mode reuses the **existing Hermes agent installation on the host** instead 
 - New CLI-backed threads start `stateless`, but are upgraded to `durable` automatically once Hermes returns a real session ID.
 - HTTP-backed threads also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits `continuationMode`.
 - HTTP mode remains the preferred path for production-grade durable continuation.
+- When older thread history is truncated, the worker includes a deterministic synthetic continuity summary instead of claiming durable memory.
 
 ### 2. External HTTP adapter (`gatewayMode=http`)
 
@@ -75,6 +77,12 @@ Request body shape:
     "allowedPluginTools": ["paperclip.dashboard"],
     "allowedHermesToolsets": ["web", "file", "vision"]
   },
+  "continuity": {
+    "strategy": "synthetic-summary",
+    "olderMessageCount": 6,
+    "totalMessageCount": 10,
+    "summary": "- User: Earlier board review requested a concise launch-risk summary."
+  },
   "context": {
     "company": { "id": "comp_123", "name": "Acme" },
     "project": { "id": "proj_456", "name": "Core App" },
@@ -103,7 +111,8 @@ Request body shape:
       "role": "user",
       "content": [
         { "type": "text", "text": "Compare delivery risk." },
-        { "type": "image", "mimeType": "image/png", "data": "<base64>" }
+        { "type": "image", "mimeType": "image/png", "data": "<base64>" },
+        { "type": "text", "text": "[image_analysis:diagram.png]\\nVision summary: Architecture screenshot..." }
       ]
     }
   ]
@@ -139,6 +148,7 @@ The service exposes:
 
 - `GET /health`
 - `POST /sessions/continue`
+- `POST /images/analyze`
 
 #### Response
 
@@ -168,24 +178,53 @@ The external adapter service should:
 1. Continue or create Hermes sessions.
 2. Translate plugin-provided scope and tools into Hermes system/context prompts.
 3. Route multimodal blocks to Hermes in the form expected by the target provider.
-4. Filter unsupported Hermes skills/toolsets against the host runtime before passing `-s/-t`.
-5. Return normalized text + tool traces.
-6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
-7. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
-8. Require secure remote transport by default. Non-loopback adapter URLs must use `https` unless the operator explicitly sets `allowInsecureHttpAdapters=true`.
-9. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
-10. Require `application/json` and reject malformed payloads with `400` instead of passing unvalidated input to Hermes.
-11. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
-12. Enforce adapter auth in a side-channel-resistant way.
+4. Analyze images separately when requested and return normalized summary/OCR/detail fields.
+5. Filter unsupported Hermes skills/toolsets against the host runtime before passing `-s/-t`.
+6. Return normalized text + tool traces.
+7. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
+8. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
+9. Require secure remote transport by default. Non-loopback adapter URLs must use `https` unless the operator explicitly sets `allowInsecureHttpAdapters=true`.
+10. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
+11. Require `application/json` and reject malformed payloads with `400` instead of passing unvalidated input to Hermes.
+12. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
+13. Enforce adapter auth in a side-channel-resistant way.
+
+## Remote HTTPS smoke validation
+
+This repo now ships two adapter validation helpers:
+
+- `pnpm remote:smoke:local` — builds the repo, starts the bundled adapter, places an ephemeral self-signed HTTPS proxy in front of it, and exercises the signed remote adapter contract locally.
+- `pnpm remote:smoke` — targets an existing remote adapter URL using the same signed request format as the worker.
+
+Example:
+
+```bash
+MASTER_CHAT_REMOTE_ADAPTER_URL=https://hermes-adapter.example.com \
+MASTER_CHAT_REMOTE_ADAPTER_TOKEN=replace-me \
+pnpm remote:smoke
+```
+
+The smoke client verifies `/health`, signs requests exactly like the worker, and always exercises `POST /sessions/continue`. Set `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` to probe `POST /images/analyze` with the same READY-card PNG, or `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true` to make that image-analysis leg mandatory for the run.
 
 ## Paperclip runtime considerations
 
 - The worker persists thread state through `ctx.state` with a schema version.
+- Image bytes are persisted to a host-local filesystem store by default and hydrated lazily back into thread detail responses.
 - UI calls use the built-in plugin bridge only.
 - The browser never needs Hermes secrets or direct provider access.
 - Scope selectors are loaded paginated and now surface truncation warnings instead of silently hiding records.
 - Retry re-runs only the failed assistant continuation; it does not create a new user turn.
 - Worker config updates are validated before apply, so invalid adapter URLs, malformed auth header names, or missing auth fail early instead of breaking the next live turn.
+
+## Multimodal enrichment flow
+
+1. The browser sends a supported inline image data URL.
+2. The worker validates bytes/MIME, computes a content hash, and checks prior thread history for cached analysis.
+3. If needed, Hermes performs an image-analysis turn:
+   - CLI mode uses `hermes chat --image <path>`
+   - HTTP mode calls `POST /images/analyze`
+4. The worker persists the resulting summary/OCR/details next to the image metadata.
+5. The main chat turn includes both the actual image block and a compact text fallback derived from the analysis so providers without strong multimodal continuity still get the critical context.
 
 ## Suggested deployment shapes
 

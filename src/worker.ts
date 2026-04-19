@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { definePlugin, runWorker, type PluginContext } from "@paperclipai/plugin-sdk";
 import { ACTION_KEYS, DATA_KEYS, DEFAULT_CONFIG, PAGE_ROUTE, PLUGIN_ID, SAFE_INLINE_IMAGE_MIME_TYPES } from "./constants.js";
 import { concurrencyError, normalizeMasterChatError, validationError } from "./errors.js";
+import { hydrateMessages, migrateInlineAttachments, persistAttachments } from "./attachments.js";
+import { buildContinuitySnapshot } from "./continuity.js";
 import {
   buildThreadTitle,
   createDefaultSkillPolicy,
@@ -57,6 +59,12 @@ function normalizeConfig(config: Record<string, unknown> | null | undefined): Ma
     gatewayMode: gatewayMode === "http" || gatewayMode === "mock" || gatewayMode === "cli" || gatewayMode === "auto"
       ? gatewayMode
       : DEFAULT_CONFIG.gatewayMode,
+    attachmentStorageMode: config?.attachmentStorageMode === "inline" || config?.attachmentStorageMode === "filesystem"
+      ? config.attachmentStorageMode
+      : DEFAULT_CONFIG.attachmentStorageMode,
+    attachmentStorageDirectory: typeof config?.attachmentStorageDirectory === "string" && config.attachmentStorageDirectory.trim()
+      ? config.attachmentStorageDirectory.trim()
+      : DEFAULT_CONFIG.attachmentStorageDirectory,
     hermesBaseUrl: typeof config?.hermesBaseUrl === "string" ? config.hermesBaseUrl.trim() : DEFAULT_CONFIG.hermesBaseUrl,
     hermesCommand: typeof config?.hermesCommand === "string" ? config.hermesCommand.trim() : DEFAULT_CONFIG.hermesCommand,
     hermesWorkingDirectory: typeof config?.hermesWorkingDirectory === "string" ? config.hermesWorkingDirectory.trim() : DEFAULT_CONFIG.hermesWorkingDirectory,
@@ -85,6 +93,10 @@ function normalizeConfig(config: Record<string, unknown> | null | undefined): Ma
     availablePluginTools: stringArray(config?.availablePluginTools, [...DEFAULT_CONFIG.availablePluginTools]),
     maxHistoryMessages: numberConfig(config?.maxHistoryMessages, DEFAULT_CONFIG.maxHistoryMessages, 4),
     maxMessageChars: numberConfig(config?.maxMessageChars, DEFAULT_CONFIG.maxMessageChars, 1),
+    enableVisionAnalysis: typeof config?.enableVisionAnalysis === "boolean"
+      ? config.enableVisionAnalysis
+      : DEFAULT_CONFIG.enableVisionAnalysis,
+    imageAnalysisMaxChars: numberConfig(config?.imageAnalysisMaxChars, DEFAULT_CONFIG.imageAnalysisMaxChars, 256),
     allowInlineImageData: typeof config?.allowInlineImageData === "boolean" ? config.allowInlineImageData : DEFAULT_CONFIG.allowInlineImageData,
     maxAttachmentCount: numberConfig(config?.maxAttachmentCount, DEFAULT_CONFIG.maxAttachmentCount, 0),
     maxAttachmentBytesPerFile: numberConfig(config?.maxAttachmentBytesPerFile, DEFAULT_CONFIG.maxAttachmentBytesPerFile, 1),
@@ -127,6 +139,9 @@ function normalizeSkillPatch(config: MasterChatPluginConfig, patch?: Partial<Ski
 
 function pluginWarnings(config: MasterChatPluginConfig): string[] {
   const warnings: string[] = [];
+  if (config.attachmentStorageMode === "filesystem") {
+    warnings.push(`Image binaries are persisted on the Paperclip host filesystem under ${config.attachmentStorageDirectory}.`);
+  }
   if (config.gatewayMode === "cli" || config.gatewayMode === "auto") {
     warnings.push("Local Hermes CLI reuse runs trusted host code. Restrict plugin install to trusted Paperclip instances.");
   }
@@ -138,6 +153,9 @@ function pluginWarnings(config: MasterChatPluginConfig): string[] {
   }
   if (config.allowInsecureHttpAdapters) {
     warnings.push("Non-HTTPS remote adapter URLs are allowed. Enable this only for trusted internal or transitional deployments.");
+  }
+  if (config.enableVisionAnalysis) {
+    warnings.push("Inline images are enriched with Hermes vision/OCR analysis before persistence to reduce multimodal fallback risk.");
   }
   return warnings;
 }
@@ -160,10 +178,18 @@ function validateConfigShape(config: MasterChatPluginConfig): { ok: boolean; err
   const warnings = pluginWarnings(config);
   const requestedGatewayMode = config.gatewayMode;
 
+  if (config.attachmentStorageMode !== "filesystem" && config.attachmentStorageMode !== "inline") {
+    errors.push("attachmentStorageMode must be either 'filesystem' or 'inline'");
+  }
+
   if (!config.hermesAuthHeaderName.trim()) {
     errors.push("hermesAuthHeaderName must not be empty");
   } else if (!HTTP_HEADER_NAME_RE.test(config.hermesAuthHeaderName)) {
     errors.push("hermesAuthHeaderName must be a valid HTTP header name");
+  }
+
+  if (!config.attachmentStorageDirectory.trim()) {
+    errors.push("attachmentStorageDirectory must not be empty");
   }
 
   if (requestedGatewayMode === "cli" && !config.hermesCommand.trim()) {
@@ -206,6 +232,10 @@ function validateConfigShape(config: MasterChatPluginConfig): { ok: boolean; err
     errors.push("maxMessageChars must be at least 1");
   }
 
+  if (config.imageAnalysisMaxChars < 256) {
+    errors.push("imageAnalysisMaxChars must be at least 256");
+  }
+
   return {
     ok: errors.length === 0,
     errors,
@@ -227,12 +257,31 @@ function validateConfigInput(rawConfig: Record<string, unknown> | null | undefin
     errors.push("hermesAuthHeaderName must be a valid HTTP header name");
   }
 
+  if (
+    typeof rawConfig?.attachmentStorageMode === "string"
+    && rawConfig.attachmentStorageMode !== "filesystem"
+    && rawConfig.attachmentStorageMode !== "inline"
+  ) {
+    errors.push("attachmentStorageMode must be either 'filesystem' or 'inline'");
+  }
+
+  if (typeof rawConfig?.attachmentStorageDirectory === "string" && !rawConfig.attachmentStorageDirectory.trim()) {
+    errors.push("attachmentStorageDirectory must not be empty");
+  }
+
   if (gatewayMode === "cli" && typeof rawConfig?.hermesCommand === "string" && !rawConfig.hermesCommand.trim()) {
     errors.push("gatewayMode=cli requires hermesCommand");
   }
 
   if (typeof rawConfig?.maxMessageChars === "number" && (!Number.isFinite(rawConfig.maxMessageChars) || rawConfig.maxMessageChars < 1)) {
     errors.push("maxMessageChars must be at least 1");
+  }
+
+  if (
+    typeof rawConfig?.imageAnalysisMaxChars === "number"
+    && (!Number.isFinite(rawConfig.imageAnalysisMaxChars) || rawConfig.imageAnalysisMaxChars < 256)
+  ) {
+    errors.push("imageAnalysisMaxChars must be at least 256");
   }
 
   if (typeof rawConfig?.maxAttachmentBytesPerFile === "number" && (!Number.isFinite(rawConfig.maxAttachmentBytesPerFile) || rawConfig.maxAttachmentBytesPerFile < 1)) {
@@ -296,6 +345,9 @@ function validateMessageText(config: MasterChatPluginConfig, text: string): stri
 }
 
 function estimateAttachmentBytes(attachment: InlineImageAttachment): number {
+  if (!attachment.dataUrl) {
+    throw validationError(`Attachment '${attachment.name}' must include inline data`);
+  }
   const match = attachment.dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/u);
   if (!match) {
     throw validationError(`Attachment '${attachment.name}' must be a base64 data URL`);
@@ -319,6 +371,16 @@ function estimateAttachmentBytes(attachment: InlineImageAttachment): number {
   return byteSize;
 }
 
+function attachmentSha256(attachment: InlineImageAttachment): string {
+  const match = attachment.dataUrl?.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/u);
+  if (!match) {
+    throw validationError(`Attachment '${attachment.name}' must be a base64 data URL`);
+  }
+  return createHash("sha256")
+    .update(Buffer.from(match[2].replace(/\s+/gu, ""), "base64"))
+    .digest("hex");
+}
+
 function validateAttachments(config: MasterChatPluginConfig, attachments: InlineImageAttachment[]): InlineImageAttachment[] {
   if (attachments.length > config.maxAttachmentCount) {
     throw validationError(`A message can include at most ${config.maxAttachmentCount} attachment(s)`);
@@ -336,6 +398,7 @@ function validateAttachments(config: MasterChatPluginConfig, attachments: Inline
       throw validationError("Inline image data is disabled for this plugin instance");
     }
     const byteSize = estimateAttachmentBytes(attachment);
+    const sha256 = attachment.sha256 ?? attachmentSha256(attachment);
     if (byteSize > config.maxAttachmentBytesPerFile) {
       throw validationError(`Attachment '${attachment.name}' exceeds the per-file limit of ${config.maxAttachmentBytesPerFile} bytes`);
     }
@@ -343,6 +406,7 @@ function validateAttachments(config: MasterChatPluginConfig, attachments: Inline
     return {
       ...attachment,
       byteSize,
+      sha256,
     };
   });
 
@@ -369,10 +433,127 @@ function sanitizeToolTraces(toolTraces: HermesToolTrace[], config: MasterChatPlu
   }));
 }
 
+function findCachedImageAnalysis(history: ChatMessage[], attachment: InlineImageAttachment): InlineImageAttachment["analysis"] | undefined {
+  if (!attachment.sha256) return undefined;
+  for (const message of [...history].reverse()) {
+    for (const part of [...message.parts].reverse()) {
+      if (part.type !== "image") continue;
+      if (part.sha256 !== attachment.sha256) continue;
+      if (!part.analysis || part.analysis.status !== "complete") continue;
+      return {
+        ...part.analysis,
+        cached: true,
+      };
+    }
+  }
+  return undefined;
+}
+
+async function enrichAttachmentsWithVision(input: {
+  gateway: Awaited<ReturnType<typeof createHermesGateway>>["gateway"];
+  config: MasterChatPluginConfig;
+  thread: ReturnType<typeof touchThread>;
+  requestId: string;
+  attachments: InlineImageAttachment[];
+  history: ChatMessage[];
+  ctx: PluginContext;
+}): Promise<InlineImageAttachment[]> {
+  const { gateway, config, thread, requestId, attachments, history, ctx } = input;
+  const analyzeImage = gateway.analyzeImage?.bind(gateway);
+  if (!config.enableVisionAnalysis || attachments.length === 0 || !analyzeImage) {
+    return attachments;
+  }
+
+  return await Promise.all(attachments.map(async (attachment) => {
+    if (attachment.analysis?.status === "complete") {
+      return attachment;
+    }
+
+    const cached = findCachedImageAnalysis(history, attachment);
+    if (cached) {
+      await ctx.metrics.write("master_chat.image_analysis", 1, { status: "cache_hit" });
+      return {
+        ...attachment,
+        altText: attachment.altText ?? cached.summary,
+        analysis: cached,
+      };
+    }
+
+    try {
+      const analysis = await analyzeImage({
+        requestId,
+        attachment,
+        session: thread.hermes,
+        metadata: {
+          threadId: thread.threadId,
+          title: thread.title,
+        },
+      });
+      await ctx.metrics.write("master_chat.image_analysis", 1, { status: analysis.status });
+      return {
+        ...attachment,
+        altText: attachment.altText ?? analysis.summary,
+        analysis: {
+          status: analysis.status,
+          summary: analysis.summary,
+          extractedText: analysis.extractedText,
+          notableDetails: analysis.notableDetails,
+          generatedAt: new Date().toISOString(),
+          provider: analysis.provider,
+          model: analysis.model,
+          errorMessage: analysis.errorMessage,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await ctx.metrics.write("master_chat.image_analysis", 1, { status: "error" });
+      return {
+        ...attachment,
+        analysis: {
+          status: "error",
+          generatedAt: new Date().toISOString(),
+          errorMessage: message,
+        },
+      };
+    }
+  }));
+}
+
+async function prepareThreadMessages(input: {
+  ctx: PluginContext;
+  config: MasterChatPluginConfig;
+  companyId: string;
+  store: Awaited<ReturnType<typeof loadStore>>;
+  threadId: string;
+}): Promise<{
+  storedMessages: ChatMessage[];
+  hydratedMessages: ChatMessage[];
+}> {
+  const { ctx, config, companyId, store, threadId } = input;
+  const existingMessages = getThreadMessages(store, threadId);
+  const migrated = await migrateInlineAttachments({
+    config,
+    companyId,
+    messages: existingMessages,
+  });
+
+  if (migrated.changed) {
+    for (const message of migrated.messages) {
+      upsertMessage(store, message);
+    }
+    await saveStore(ctx, companyId, store);
+  }
+
+  return {
+    storedMessages: migrated.messages,
+    hydratedMessages: await hydrateMessages(config, migrated.messages),
+  };
+}
+
 async function buildBootstrap(ctx: PluginContext, config: MasterChatPluginConfig, companyId: string): Promise<BootstrapData> {
   const options = await loadCompanyScopedOptions(ctx, companyId, config);
   validateScopeAgainstOptions(buildDefaultScope(config, companyId), options);
-  const store = await loadStore(ctx, companyId);
+  const store = await ensureAttachmentStorage(ctx, config, companyId, await loadStore(ctx, companyId));
   return {
     pluginId: PLUGIN_ID,
     routePath: PAGE_ROUTE,
@@ -407,14 +588,20 @@ async function buildThreadDetail(
   companyId: string,
   threadId: string,
 ): Promise<ThreadDetailData> {
-  const store = await loadStore(ctx, companyId);
+  const store = await ensureAttachmentStorage(ctx, config, companyId, await loadStore(ctx, companyId));
   const thread = getThread(store, threadId);
-  const messages = getThreadMessages(store, threadId);
+  const { hydratedMessages } = await prepareThreadMessages({
+    ctx,
+    config,
+    companyId,
+    store,
+    threadId,
+  });
   const options = await loadCompanyScopedOptions(ctx, companyId, config);
   validateScopeAgainstOptions(thread.scope, options);
   return {
     thread,
-    messages,
+    messages: hydratedMessages,
     context: buildScopeContextSnapshot({
       scope: thread.scope,
       options,
@@ -422,6 +609,23 @@ async function buildThreadDetail(
     streamChannel: streamChannelForThread(threadId),
     warnings: [...options.warnings, ...pluginWarnings(config)],
   };
+}
+
+async function ensureAttachmentStorage(
+  ctx: PluginContext,
+  config: MasterChatPluginConfig,
+  companyId: string,
+  store: Awaited<ReturnType<typeof loadStore>>,
+): Promise<Awaited<ReturnType<typeof loadStore>>> {
+  const migrated = await migrateInlineAttachments({
+    config,
+    companyId,
+    messages: store.messages,
+  });
+  if (!migrated.changed) return store;
+  store.messages = migrated.messages;
+  await saveStore(ctx, companyId, store);
+  return store;
 }
 
 async function createThreadAction(
@@ -438,7 +642,7 @@ async function createThreadAction(
   });
   validateScopeAgainstOptions(scope, options);
 
-  const store = await loadStore(ctx, companyId);
+  const store = await ensureAttachmentStorage(ctx, config, companyId, await loadStore(ctx, companyId));
   const thread = createThreadRecord({
     companyId,
     title: typeof params.title === "string" ? params.title : undefined,
@@ -476,6 +680,8 @@ async function performAssistantTurn(input: {
   thread: ReturnType<typeof touchThread>;
   requestId: string;
   history: ChatMessage[];
+  selectedGateway?: Awaited<ReturnType<typeof createHermesGateway>>;
+  allMessages?: ChatMessage[];
 }) {
   const { ctx, config, companyId, store, requestId, history } = input;
   let thread = input.thread;
@@ -489,10 +695,15 @@ async function performAssistantTurn(input: {
   let reason = thread.metadata.gatewayReason ?? "uninitialized";
 
   try {
-    const selectedGateway = await createHermesGateway(ctx, config);
+    const selectedGateway = input.selectedGateway ?? await createHermesGateway(ctx, config);
     const gateway = selectedGateway.gateway;
     selection = selectedGateway.selection;
     reason = selectedGateway.reason;
+    const continuity = buildContinuitySnapshot({
+      session: thread.hermes,
+      messages: input.allMessages ?? history,
+      historyLimit: threadContextLimit(config),
+    });
 
     upsertThread(store, touchThread(thread, {
       metadata: {
@@ -517,6 +728,7 @@ async function performAssistantTurn(input: {
       context,
       history,
       tools: buildToolDescriptors(toolPolicy),
+      continuity,
       metadata: {
         threadId: thread.threadId,
         title: thread.title,
@@ -569,6 +781,9 @@ async function performAssistantTurn(input: {
         lastFailureAt: undefined,
         gatewayMode: response.gatewayMode,
         gatewayReason: reason,
+        continuityStrategy: continuity.strategy,
+        continuitySummary: continuity.summary,
+        olderMessageCount: continuity.olderMessageCount,
       },
     }));
     await saveStore(ctx, companyId, store);
@@ -651,7 +866,7 @@ async function sendMessageAction(
 ) {
   const companyId = requireCompanyId(params);
   const requestId = typeof params.requestId === "string" && params.requestId.trim() ? params.requestId : randomUUID();
-  const store = await loadStore(ctx, companyId);
+  const store = await ensureAttachmentStorage(ctx, config, companyId, await loadStore(ctx, companyId));
   const options = await loadCompanyScopedOptions(ctx, companyId, config);
   const scopeDefaults = buildDefaultScope(config, companyId);
 
@@ -682,13 +897,27 @@ async function sendMessageAction(
   }
 
   const text = typeof params.text === "string" ? validateMessageText(config, params.text) : "";
-  const attachments = validateAttachments(config, Array.isArray(params.attachments) ? params.attachments as InlineImageAttachment[] : []);
+  let attachments = validateAttachments(config, Array.isArray(params.attachments) ? params.attachments as InlineImageAttachment[] : []);
   if (!text && attachments.length === 0) {
     throw validationError("A message requires text or at least one attachment");
   }
 
+  const selectedGateway = attachments.length > 0 ? await createHermesGateway(ctx, config) : undefined;
+  const priorMessages = await hydrateMessages(config, getThreadMessages(store, thread.threadId));
+  if (attachments.length > 0 && selectedGateway) {
+    attachments = await enrichAttachmentsWithVision({
+      gateway: selectedGateway.gateway,
+      config,
+      thread,
+      requestId,
+      attachments,
+      history: priorMessages,
+      ctx,
+    });
+  }
+
   const toolPolicy = createToolPolicy(config, thread.skills);
-  const userMessage = createMessageRecord({
+  let userMessage = createMessageRecord({
     threadId: thread.threadId,
     role: "user",
     requestId,
@@ -699,12 +928,27 @@ async function sendMessageAction(
     routing: thread.scope,
     toolPolicy,
   });
+  const persistedAttachments = await persistAttachments({
+    config,
+    companyId,
+    threadId: thread.threadId,
+    messageId: userMessage.messageId,
+    attachments: attachments,
+  });
+  userMessage = {
+    ...userMessage,
+    parts: [
+      ...(text ? [{ type: "text", text } as const] : []),
+      ...persistedAttachments,
+    ],
+  };
 
   upsertThread(store, thread);
   upsertMessage(store, userMessage);
   await saveStore(ctx, companyId, store);
 
-  const history = getThreadMessages(store, thread.threadId).slice(-threadContextLimit(config));
+  const allMessages = await hydrateMessages(config, getThreadMessages(store, thread.threadId));
+  const history = allMessages.slice(-threadContextLimit(config));
   return await performAssistantTurn({
     ctx,
     config,
@@ -713,6 +957,8 @@ async function sendMessageAction(
     thread,
     requestId,
     history,
+    selectedGateway,
+    allMessages,
   });
 }
 
@@ -725,13 +971,13 @@ async function retryLastTurnAction(
   const threadId = typeof params.threadId === "string" ? params.threadId : "";
   const requestId = typeof params.requestId === "string" && params.requestId.trim() ? params.requestId : randomUUID();
   if (!threadId) throw validationError("threadId is required");
-  const store = await loadStore(ctx, companyId);
+  const store = await ensureAttachmentStorage(ctx, config, companyId, await loadStore(ctx, companyId));
   const thread = getThread(store, threadId);
   if (thread.metadata.inFlightRequestId && thread.metadata.inFlightRequestId !== requestId) {
     throw concurrencyError(`Thread '${thread.threadId}' already has an in-flight request`);
   }
 
-  const messages = getThreadMessages(store, threadId);
+  const messages = await hydrateMessages(config, getThreadMessages(store, threadId));
   const lastUserIndex = [...messages].map((message, index) => ({ message, index })).reverse().find((entry) => entry.message.role === "user")?.index;
   if (lastUserIndex === undefined) throw validationError("No user turn found to retry");
 
@@ -751,6 +997,7 @@ async function retryLastTurnAction(
     thread,
     requestId,
     history,
+    allMessages: messages,
   });
 }
 

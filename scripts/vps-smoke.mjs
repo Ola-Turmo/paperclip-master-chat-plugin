@@ -13,6 +13,7 @@ const hermesCwd = process.env.MASTER_CHAT_HERMES_CWD || "/root/hermes-agent";
 const adapterPort = Number(process.env.MASTER_CHAT_ADAPTER_PORT || (8800 + Math.floor(Math.random() * 200)));
 const adapterHost = process.env.MASTER_CHAT_ADAPTER_HOST || "127.0.0.1";
 const adapterToken = process.env.MASTER_CHAT_ADAPTER_TOKEN || `smoke-${Date.now()}`;
+const readyCardPng = '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';
 
 function log(step, detail) {
   console.log(`[vps:smoke] ${step}${detail ? `: ${detail}` : ""}`);
@@ -131,6 +132,14 @@ async function sendSmokeTurn(mode, companyId) {
         companyId,
         requestId,
         text: "Reply with the single word READY.",
+        attachments: [{
+          id: `img-${mode}`,
+          type: "image",
+          name: "ready-card.png",
+          mimeType: "image/png",
+          dataUrl: `data:image/png;base64,${readyCardPng}`,
+          source: "inline",
+        }],
       },
     }),
   });
@@ -156,9 +165,14 @@ async function sendSmokeTurn(mode, companyId) {
     .map((part) => part.text)
     .join("\n")
     .trim();
+  const latestUser = [...messages].reverse().find((message) => message.role === "user");
+  const imagePart = (latestUser?.parts ?? []).find((part) => part.type === "image");
 
   if (!replyText.includes("READY")) {
     fail(`Smoke turn for ${mode} did not return READY. Reply was: ${JSON.stringify(replyText)}`);
+  }
+  if (!imagePart?.analysis || imagePart.analysis.status !== "complete") {
+    fail(`Smoke turn for ${mode} did not persist completed image analysis. Part was: ${JSON.stringify(imagePart)}`);
   }
 
   if (mode === "http" && sendResult?.data?.gatewayMode !== "http") {
@@ -172,6 +186,9 @@ async function sendSmokeTurn(mode, companyId) {
     replyText,
     gatewayMode: sendResult?.data?.gatewayMode,
     continuationMode: sendResult?.data?.continuationMode,
+    imageAnalysisStatus: imagePart.analysis.status,
+    imageSummary: imagePart.analysis.summary ?? null,
+    imageExtractedText: imagePart.analysis.extractedText ?? null,
   };
 }
 

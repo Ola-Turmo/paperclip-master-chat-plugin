@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatMessagePart, HermesRequest, MasterChatPluginConfig, SkillPolicy } from "../types.js";
+import { buildImageAnalysisFallbackText } from "./image-analysis.js";
 
 export interface HermesCliInvocation {
   command: string;
@@ -11,7 +12,10 @@ function describeMessagePart(part: ChatMessagePart): string {
     case "text":
       return part.text.trim();
     case "image":
-      return `[Image attachment: ${part.name} (${part.mimeType}, source=${part.source}${part.byteSize ? `, bytes=${part.byteSize}` : ""})]`;
+      return [
+        `[Image attachment: ${part.name} (${part.mimeType}, source=${part.source}${part.byteSize ? `, bytes=${part.byteSize}` : ""})]`,
+        buildImageAnalysisFallbackText(part.analysis, 2_000),
+      ].filter(Boolean).join("\n");
     case "tool_call":
       return `[Tool call] ${part.toolName}: ${part.summary}`;
     case "tool_result":
@@ -50,6 +54,12 @@ function summarizeScope(request: HermesRequest, skillPolicy: SkillPolicy): strin
 
 export function buildHermesCliPrompt(request: HermesRequest, skillPolicy: SkillPolicy = request.skillPolicy, warnings: string[] = []): string {
   const history = request.history.map(formatHistoryMessage).join("\n\n---\n\n");
+  const continuityLines = [
+    `Continuity strategy: ${request.continuity.strategy}`,
+    `Tracked messages: ${request.continuity.totalMessageCount}`,
+    `Messages omitted from recent history: ${request.continuity.olderMessageCount}`,
+    request.continuity.summary ? `Synthetic continuity summary:\n${request.continuity.summary}` : undefined,
+  ].filter((line): line is string => Boolean(line));
 
   return [
     "You are Hermes acting as the orchestration brain for Paperclip Master Chat.",
@@ -62,8 +72,13 @@ export function buildHermesCliPrompt(request: HermesRequest, skillPolicy: SkillP
     `Thread id: ${request.metadata.threadId}`,
     `Request id: ${request.requestId}`,
     ...summarizeScope(request, skillPolicy),
+    `Continuity strategy: ${request.continuity.strategy}`,
+    request.continuity.summary ? `Older context summary: ${request.continuity.summary}` : "Older context summary: none",
     request.context.warnings.length > 0 ? `Catalog warnings: ${request.context.warnings.join(" | ")}` : "Catalog warnings: none",
     warnings.length > 0 ? `Hermes host compatibility notes: ${warnings.join(" | ")}` : "Hermes host compatibility notes: none",
+    "",
+    "Continuity context:",
+    ...continuityLines,
     "",
     "Recent conversation history:",
     history || "[No prior messages]",

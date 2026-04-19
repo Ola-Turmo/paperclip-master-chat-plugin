@@ -15,7 +15,9 @@
     "repo:check": "git diff --check",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
     "vps:check": "node ./scripts/vps-reuse-check.mjs",
-    "vps:smoke": "node ./scripts/vps-smoke.mjs"
+    "vps:smoke": "node ./scripts/vps-smoke.mjs",
+    "remote:smoke": "node ./scripts/remote-adapter-smoke.mjs",
+    "remote:smoke:local": "node ./scripts/remote-adapter-local-smoke.mjs"
   },
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js",

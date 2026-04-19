@@ -4,8 +4,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
+import { buildImageAnalysisFromPath, buildMetadataFallbackAnalysis, cleanupTempDir, dataUrlToTempFile } from "./hermes/image-analysis.js";
 import type { HermesCapabilityInventory } from "./hermes/capabilities.js";
-import type { HermesContinuationMode, HermesResponse, HermesToolTrace } from "./types.js";
+import type { HermesContinuationMode, HermesImageAnalysisResult, HermesResponse, HermesToolTrace } from "./types.js";
 import { armProcessTimeout } from "./process.js";
 
 export interface AdapterInvocation {
@@ -184,6 +185,12 @@ export function buildAdapterPrompt(payload: HermesGatewayPayload, warnings: stri
     const body = message.content.map(describeContentBlock).filter(Boolean).join("\n");
     return [`Message ${index + 1} (${message.role})`, body || "[No content]"];
   }).flat().join("\n\n---\n\n");
+  const continuityLines = [
+    `Continuity strategy: ${payload.continuity.strategy}`,
+    `Tracked messages: ${payload.continuity.totalMessageCount}`,
+    `Messages omitted from recent history: ${payload.continuity.olderMessageCount}`,
+    payload.continuity.summary ? `Synthetic continuity summary:\n${payload.continuity.summary}` : undefined,
+  ].filter((line): line is string => Boolean(line));
 
   return [
     "You are Hermes acting through the Paperclip Master Chat adapter service.",
@@ -198,8 +205,13 @@ export function buildAdapterPrompt(payload: HermesGatewayPayload, warnings: stri
     `Hermes capability preferences: ${payload.skillPolicy.enabled.join(", ") || "None"}`,
     `Hermes runtime tools requested: ${payload.skillPolicy.toolsets.join(", ") || "Auto"}`,
     `Allowed plugin tools: ${payload.toolPolicy.allowedPluginTools.join(", ") || "None"}`,
+    `Continuity strategy: ${payload.continuity.strategy}`,
+    payload.continuity.summary ? `Older context summary: ${payload.continuity.summary}` : "Older context summary: none",
     payload.context.warnings.length ? `Warnings: ${payload.context.warnings.join(" | ")}` : "Warnings: none",
     warnings.length ? `Hermes host compatibility notes: ${warnings.join(" | ")}` : "Hermes host compatibility notes: none",
+    "",
+    "Continuity context:",
+    ...continuityLines,
     "",
     "Conversation:",
     conversation || "[No prior messages]",
@@ -238,6 +250,25 @@ function buildSyntheticToolTraces(payload: HermesGatewayPayload): HermesToolTrac
   });
 
   return traces;
+}
+
+function validateImageAnalysisPayload(payload: unknown): string[] {
+  const errors: string[] = [];
+  if (!isRecord(payload)) {
+    return ["request body must be a JSON object"];
+  }
+  if (!isRecord(payload.session)) errors.push("session must be an object");
+  if (!isRecord(payload.metadata) || typeof payload.metadata.threadId !== "string" || !payload.metadata.threadId.trim()) {
+    errors.push("metadata.threadId is required");
+  }
+  if (!isRecord(payload.image)) {
+    errors.push("image must be an object");
+    return errors;
+  }
+  if (typeof payload.image.name !== "string" || !payload.image.name.trim()) errors.push("image.name is required");
+  if (typeof payload.image.mimeType !== "string" || !payload.image.mimeType.trim()) errors.push("image.mimeType is required");
+  if (typeof payload.image.dataUrl !== "string" || !payload.image.dataUrl.trim()) errors.push("image.dataUrl is required");
+  return errors;
 }
 
 export async function buildAdapterInvocation(
@@ -370,6 +401,47 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
   };
 }
 
+async function runHermesImageAnalysis(
+  config: AdapterServiceConfig,
+  payload: {
+    session: { profileId?: string };
+    metadata: { threadId: string };
+    image: { name: string; mimeType: string; dataUrl: string; altText?: string };
+  },
+): Promise<HermesImageAnalysisResult> {
+  const temp = await dataUrlToTempFile({
+    id: payload.metadata.threadId,
+    type: "image",
+    name: payload.image.name,
+    mimeType: payload.image.mimeType,
+    dataUrl: payload.image.dataUrl,
+    altText: payload.image.altText,
+    source: "inline",
+  });
+
+  try {
+    try {
+      return await buildImageAnalysisFromPath(temp.filePath, {
+        hermesCommand: config.hermesCommand,
+        hermesWorkingDirectory: config.hermesWorkingDirectory,
+        profileId: payload.session.profileId || config.defaultProfileId || "default",
+        timeoutMs: config.timeoutMs,
+        maxChars: 4_000,
+      });
+    } catch (error) {
+      return buildMetadataFallbackAnalysis({
+        name: payload.image.name,
+        mimeType: payload.image.mimeType,
+        altText: payload.image.altText,
+        maxChars: 4_000,
+        error,
+      });
+    }
+  } finally {
+    await cleanupTempDir(temp.dir);
+  }
+}
+
 export async function readBodyLimited(
   req: AsyncIterable<Buffer | string>,
   maxBytes: number,
@@ -421,6 +493,14 @@ export function validateGatewayPayload(payload: unknown): string[] {
     errors.push("scope.companyId is required");
   }
   if (!Array.isArray(payload.messages)) errors.push("messages must be an array");
+  if (
+    !isRecord(payload.continuity)
+    || typeof payload.continuity.strategy !== "string"
+    || typeof payload.continuity.olderMessageCount !== "number"
+    || typeof payload.continuity.totalMessageCount !== "number"
+  ) {
+    errors.push("continuity must include strategy, olderMessageCount, and totalMessageCount");
+  }
   if (!isRecord(payload.skillPolicy) || !Array.isArray(payload.skillPolicy.enabled) || !Array.isArray(payload.skillPolicy.disabled) || !Array.isArray(payload.skillPolicy.toolsets)) {
     errors.push("skillPolicy must include enabled, disabled, and toolsets arrays");
   }
@@ -479,6 +559,36 @@ export function createAdapterServer(config: AdapterServiceConfig) {
           return;
         }
         const response = await runHermesChat(config, payload as HermesGatewayPayload);
+        sendJson(res, 200, response);
+        return;
+      }
+
+      if (url.pathname === "/images/analyze" && req.method === "POST") {
+        if (!isAuthorized(headers, config)) {
+          sendJson(res, 401, { error: "unauthorized" });
+          return;
+        }
+        if (!hasJsonContentType(readHeader(headers, "content-type"))) {
+          sendJson(res, 415, { error: "unsupported_media_type" });
+          return;
+        }
+        const bodyText = await readBodyLimited(req, config.maxRequestBodyBytes);
+        const signature = verifySignedRequest(headers, config, req.method, url.pathname, bodyText, seenNonces);
+        if (!signature.ok) {
+          sendJson(res, 401, { error: signature.error });
+          return;
+        }
+        const payload = bodyText ? JSON.parse(bodyText) as unknown : {};
+        const payloadErrors = validateImageAnalysisPayload(payload);
+        if (payloadErrors.length > 0) {
+          sendJson(res, 400, { error: "invalid_request", details: payloadErrors });
+          return;
+        }
+        const response = await runHermesImageAnalysis(config, payload as {
+          session: { profileId?: string };
+          metadata: { threadId: string };
+          image: { name: string; mimeType: string; dataUrl: string; altText?: string };
+        });
         sendJson(res, 200, response);
         return;
       }

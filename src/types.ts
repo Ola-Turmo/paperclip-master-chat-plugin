@@ -2,6 +2,7 @@ export type ChatMode = "single_agent" | "multi_agent" | "company_wide";
 export type HermesGatewayMode = "auto" | "mock" | "http" | "cli";
 export type HermesGatewaySelection = "mock" | "http" | "cli";
 export type HermesContinuationMode = "durable" | "stateless";
+export type ImageAnalysisStatus = "complete" | "error" | "skipped";
 export type MasterChatErrorCode =
   | "validation"
   | "authorization"
@@ -37,11 +38,26 @@ export interface InlineImageAttachment {
   type: "image";
   name: string;
   mimeType: string;
-  dataUrl: string;
+  dataUrl?: string;
   byteSize?: number;
+  sha256?: string;
   altText?: string;
   assetId?: string;
-  source: "inline" | "paperclip-asset" | "remote";
+  storageKey?: string;
+  source: "inline" | "paperclip-asset" | "remote" | "filesystem";
+  analysis?: ImageAnalysis;
+}
+
+export interface ImageAnalysis {
+  status: ImageAnalysisStatus;
+  summary?: string;
+  extractedText?: string;
+  notableDetails?: string[];
+  generatedAt: string;
+  provider?: string;
+  model?: string;
+  cached?: boolean;
+  errorMessage?: string;
 }
 
 export interface TextMessagePart {
@@ -123,6 +139,9 @@ export interface ChatThread {
     gatewayReason?: string;
     inFlightRequestId?: string;
     lastUserMessageId?: string;
+    continuitySummary?: string;
+    continuityStrategy?: "hermes-session" | "synthetic-summary" | "recent-history-only";
+    olderMessageCount?: number;
   };
   createdAt: string;
   updatedAt: string;
@@ -186,6 +205,8 @@ export interface ThreadSummary {
 
 export interface MasterChatPluginConfig {
   gatewayMode: HermesGatewayMode;
+  attachmentStorageMode: "inline" | "filesystem";
+  attachmentStorageDirectory: string;
   hermesBaseUrl: string;
   hermesCommand: string;
   hermesWorkingDirectory?: string;
@@ -202,6 +223,8 @@ export interface MasterChatPluginConfig {
   availablePluginTools: string[];
   maxHistoryMessages: number;
   maxMessageChars: number;
+  enableVisionAnalysis: boolean;
+  imageAnalysisMaxChars: number;
   allowInlineImageData: boolean;
   maxAttachmentCount: number;
   maxAttachmentBytesPerFile: number;
@@ -280,6 +303,22 @@ export interface HermesRequest {
   context: ScopeContextSnapshot;
   history: ChatMessage[];
   tools: HermesToolDescriptor[];
+  continuity: {
+    strategy: "hermes-session" | "synthetic-summary" | "recent-history-only";
+    olderMessageCount: number;
+    totalMessageCount: number;
+    summary?: string;
+  };
+  metadata: {
+    threadId: string;
+    title: string;
+  };
+}
+
+export interface HermesImageAnalysisRequest {
+  requestId: string;
+  attachment: InlineImageAttachment;
+  session: HermesSessionConfig;
   metadata: {
     threadId: string;
     title: string;
@@ -294,7 +333,7 @@ export interface HermesToolTrace {
 }
 
 export type HermesStreamEvent =
-  | { type: "status"; stage: "started" | "tool_call" | "tool_result" | "completed"; message: string; toolName?: string }
+  | { type: "status"; stage: "started" | "image_analysis" | "tool_call" | "tool_result" | "completed"; message: string; toolName?: string }
   | { type: "delta"; text: string };
 
 export interface HermesResponse {
@@ -305,4 +344,14 @@ export interface HermesResponse {
   sessionId: string;
   gatewayMode: HermesGatewaySelection;
   continuationMode: HermesContinuationMode;
+}
+
+export interface HermesImageAnalysisResult {
+  status: ImageAnalysisStatus;
+  summary?: string;
+  extractedText?: string;
+  notableDetails?: string[];
+  provider?: string;
+  model?: string;
+  errorMessage?: string;
 }

@@ -43,6 +43,12 @@ function samplePayload(): HermesGatewayPayload {
       allowedPluginTools: ["paperclip.dashboard"],
       allowedHermesToolsets: ["web", "file"],
     },
+    continuity: {
+      strategy: "synthetic-summary",
+      olderMessageCount: 2,
+      totalMessageCount: 3,
+      summary: "- User: Earlier context established the board request.\n- Assistant: Earlier context requested a concise answer only.",
+    },
     context: {
       company: { id: "comp_1", name: "Acme" },
       project: { id: "proj_1", name: "Core App" },
@@ -79,6 +85,8 @@ describe("adapter service helpers", () => {
     expect(prompt).toContain("Allowed plugin tools: paperclip.dashboard");
     expect(prompt).toContain("Hermes host compatibility notes: none");
     expect(prompt).toContain("Warnings: issues list truncated");
+    expect(prompt).toContain("Continuity strategy: synthetic-summary");
+    expect(prompt).toContain("Synthetic continuity summary:");
     expect(prompt).toContain("[Image attachment: diagram.png");
   });
 
@@ -145,12 +153,14 @@ describe("adapter service helpers", () => {
       metadata: { threadId: "" },
       scope: {},
       messages: "nope",
+      continuity: {},
       skillPolicy: {},
       toolPolicy: {},
     })).toEqual(expect.arrayContaining([
       "metadata.threadId is required",
       "scope.companyId is required",
       "messages must be an array",
+      "continuity must include strategy, olderMessageCount, and totalMessageCount",
       "skillPolicy must include enabled, disabled, and toolsets arrays",
       "toolPolicy must include allowedPluginTools and allowedHermesToolsets arrays",
     ]));

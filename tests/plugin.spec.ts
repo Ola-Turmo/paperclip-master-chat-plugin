@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
@@ -255,5 +258,70 @@ describe("master chat plugin", () => {
         source: "inline",
       }],
     })).rejects.toThrow(/per-file limit/i);
+  });
+
+  it("persists filesystem attachments while caching vision analysis for hydrated thread detail", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "master-chat-test-"));
+    const harness = createTestHarness({
+      manifest,
+      config: {
+        gatewayMode: "mock",
+        attachmentStorageMode: "filesystem",
+        attachmentStorageDirectory: storageDir,
+        enableVisionAnalysis: true,
+      },
+    });
+    seedHarness(harness);
+    await plugin.definition.setup(harness.ctx);
+
+    try {
+      const created = await harness.performAction<{ threadId: string }>("create-thread", {
+        companyId: "comp_1",
+        projectId: "proj_1",
+        selectedAgentIds: ["agent_1"],
+      });
+
+      await harness.performAction("send-message", {
+        companyId: "comp_1",
+        threadId: created.threadId,
+        requestId: "req_image_1",
+        text: "Describe the architecture screenshot.",
+        attachments: [{
+          id: "img_1",
+          type: "image",
+          name: "diagram.png",
+          mimeType: "image/png",
+          dataUrl: "data:image/png;base64,aGVsbG8=",
+          byteSize: 5,
+          source: "inline",
+        }],
+      });
+
+      const detail = await harness.getData<{
+        thread: { metadata: { continuityStrategy?: string } };
+        messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+      }>("thread-detail", {
+        companyId: "comp_1",
+        threadId: created.threadId,
+      });
+
+      const userMessage = detail.messages.find((message) => message.role === "user");
+      const imagePart = userMessage?.parts.find((part) => part.type === "image") as {
+        source?: string;
+        dataUrl?: string;
+        storageKey?: string;
+        analysis?: { status?: string; summary?: string; extractedText?: string; cached?: boolean };
+      } | undefined;
+
+      expect(imagePart?.source).toBe("filesystem");
+      expect(imagePart?.storageKey).toBeTruthy();
+      expect(imagePart?.dataUrl).toContain("data:image/png;base64,");
+      expect(imagePart?.analysis?.status).toBe("complete");
+      expect(imagePart?.analysis?.summary).toMatch(/Mock vision summary/i);
+      expect(harness.metrics.some((metric) => metric.name === "master_chat.image_analysis")).toBe(true);
+      expect(detail.thread.metadata.continuityStrategy).toBe("recent-history-only");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });

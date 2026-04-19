@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { buildHermesCliInvocation, buildHermesCliPrompt } from "../src/hermes/cli.js";
+import { DEFAULT_CONFIG } from "../src/constants.js";
 import type { HermesRequest, MasterChatPluginConfig } from "../src/types.js";
+
+function buildConfig(overrides: Partial<MasterChatPluginConfig> = {}): MasterChatPluginConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    defaultEnabledSkills: [...DEFAULT_CONFIG.defaultEnabledSkills],
+    defaultToolsets: [...DEFAULT_CONFIG.defaultToolsets],
+    availablePluginTools: [...DEFAULT_CONFIG.availablePluginTools],
+    ...overrides,
+  };
+}
 
 function sampleRequest(): HermesRequest {
   return {
@@ -44,6 +55,12 @@ function sampleRequest(): HermesRequest {
       },
       warnings: [],
     },
+    continuity: {
+      strategy: "synthetic-summary",
+      olderMessageCount: 4,
+      totalMessageCount: 5,
+      summary: "- User: Earlier architecture review\n- Assistant: Highlighted delivery risk",
+    },
     history: [
       {
         messageId: "msg_1",
@@ -60,6 +77,13 @@ function sampleRequest(): HermesRequest {
             dataUrl: "data:image/png;base64,aGVsbG8=",
             byteSize: 5,
             source: "inline",
+            analysis: {
+              status: "complete",
+              summary: "Architecture diagram with a highlighted bottleneck",
+              extractedText: "CRITICAL PATH",
+              notableDetails: ["Red connector between services"],
+              generatedAt: "2026-04-19T08:00:00Z",
+            },
           },
         ],
         routing: {
@@ -94,36 +118,21 @@ describe("Hermes CLI helpers", () => {
     expect(prompt).toContain("Selected agents: CTO");
     expect(prompt).toContain("[Image attachment: diagram.png");
     expect(prompt).toContain("Compare delivery risk.");
+    expect(prompt).toContain("Continuity strategy: synthetic-summary");
+    expect(prompt).toContain("Synthetic continuity summary:");
+    expect(prompt).toContain("- User: Earlier architecture review");
+    expect(prompt).toContain("Vision summary: Architecture diagram with a highlighted bottleneck");
+    expect(prompt).toContain("Extracted text:\nCRITICAL PATH");
   });
 
   it("builds a CLI invocation that resumes durable Hermes sessions", () => {
-    const config: MasterChatPluginConfig = {
-      gatewayMode: "auto",
-      hermesBaseUrl: "",
+    const config = buildConfig({
       hermesCommand: "hermes",
       hermesWorkingDirectory: "/root/hermes-agent",
-      hermesAuthToken: "",
-      hermesAuthHeaderName: "authorization",
-      allowPrivateAdapterHosts: false,
-      allowInsecureHttpAdapters: false,
-      gatewayRequestTimeoutMs: 45_000,
-      defaultProfileId: "paperclip-master",
-      defaultProvider: "openrouter",
-      defaultModel: "anthropic/claude-sonnet-4",
       defaultEnabledSkills: ["paperclip-search"],
       defaultToolsets: ["web"],
       availablePluginTools: ["paperclip.dashboard"],
-      maxHistoryMessages: 24,
-      maxMessageChars: 12_000,
-      allowInlineImageData: true,
-      maxAttachmentCount: 4,
-      maxAttachmentBytesPerFile: 5_000_000,
-      maxTotalAttachmentBytes: 12_000_000,
-      maxCatalogRecords: 1000,
-      scopePageSize: 200,
-      redactToolPayloads: true,
-      enableActivityLogging: true,
-    };
+    });
 
     const invocation = buildHermesCliInvocation(sampleRequest(), config);
     expect(invocation.command).toBe("hermes");
@@ -145,33 +154,13 @@ describe("Hermes CLI helpers", () => {
     const request = sampleRequest();
     request.session.provider = "anthropic";
     request.session.model = "claude-4.5-sonnet";
-    const config: MasterChatPluginConfig = {
-      gatewayMode: "auto",
-      hermesBaseUrl: "",
+    const config = buildConfig({
       hermesCommand: "hermes",
       hermesWorkingDirectory: "/root/hermes-agent",
-      hermesAuthToken: "",
-      hermesAuthHeaderName: "authorization",
-      allowPrivateAdapterHosts: false,
-      allowInsecureHttpAdapters: false,
-      gatewayRequestTimeoutMs: 45_000,
-      defaultProfileId: "paperclip-master",
-      defaultProvider: "openrouter",
-      defaultModel: "anthropic/claude-sonnet-4",
       defaultEnabledSkills: ["paperclip-search"],
       defaultToolsets: ["web"],
       availablePluginTools: ["paperclip.dashboard"],
-      maxHistoryMessages: 24,
-      maxMessageChars: 12_000,
-      allowInlineImageData: true,
-      maxAttachmentCount: 4,
-      maxAttachmentBytesPerFile: 5_000_000,
-      maxTotalAttachmentBytes: 12_000_000,
-      maxCatalogRecords: 1000,
-      scopePageSize: 200,
-      redactToolPayloads: true,
-      enableActivityLogging: true,
-    };
+    });
 
     const invocation = buildHermesCliInvocation(request, config);
     expect(invocation.args).toContain("--provider");

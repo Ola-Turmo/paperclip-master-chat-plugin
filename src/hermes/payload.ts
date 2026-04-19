@@ -5,6 +5,7 @@ import type {
   HermesToolDescriptor,
   InlineImageAttachment,
 } from "../types.js";
+import { buildImageAnalysisFallbackText } from "./image-analysis.js";
 
 export interface HermesContentBlock {
   type: "text" | "image";
@@ -28,6 +29,7 @@ export interface HermesGatewayPayload {
   toolPolicy: HermesRequest["toolPolicy"];
   context: HermesRequest["context"];
   tools: HermesToolDescriptor[];
+  continuity: HermesRequest["continuity"];
   messages: HermesPayloadMessage[];
 }
 
@@ -36,15 +38,22 @@ function toTextBlock(text: string): HermesContentBlock[] {
   return trimmed ? [{ type: "text", text: trimmed }] : [];
 }
 
-function fromImagePart(part: InlineImageAttachment): HermesContentBlock {
-  const [, payload = ""] = part.dataUrl.split(",", 2);
-  return {
-    type: "image",
-    mimeType: part.mimeType,
-    data: payload,
-    name: part.name,
-    altText: part.altText,
-  };
+function fromImagePart(part: InlineImageAttachment): HermesContentBlock[] {
+  const dataUrl = part.dataUrl;
+  if (!dataUrl) {
+    throw new Error(`Image attachment '${part.name}' must be hydrated before Hermes payload construction`);
+  }
+  const fallbackText = buildImageAnalysisFallbackText(part.analysis, 2_500);
+  return [
+    {
+      type: "image",
+      mimeType: part.mimeType,
+      data: dataUrl.split(",", 2)[1] ?? "",
+      name: part.name,
+      altText: part.altText ?? part.analysis?.summary,
+    },
+    ...(fallbackText ? [{ type: "text" as const, text: `[image_analysis:${part.name}]\n${fallbackText}` }] : []),
+  ];
 }
 
 function partToBlocks(part: ChatMessagePart): HermesContentBlock[] {
@@ -52,7 +61,7 @@ function partToBlocks(part: ChatMessagePart): HermesContentBlock[] {
     case "text":
       return toTextBlock(part.text);
     case "image":
-      return [fromImagePart(part)];
+      return fromImagePart(part);
     case "tool_call":
       return toTextBlock(`[tool_call] ${part.toolName}: ${part.summary}`);
     case "tool_result":
@@ -73,6 +82,7 @@ export function buildHermesGatewayPayload(request: HermesRequest): HermesGateway
     toolPolicy: request.toolPolicy,
     context: request.context,
     tools: request.tools,
+    continuity: request.continuity,
     messages: request.history.map((message) => ({
       role: message.role,
       content: message.parts.flatMap(partToBlocks),

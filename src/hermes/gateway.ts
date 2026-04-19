@@ -3,6 +3,8 @@ import { randomUUID, createHmac } from "node:crypto";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { configError, timeoutError, unavailableError, upstreamError } from "../errors.js";
 import type {
+  HermesImageAnalysisRequest,
+  HermesImageAnalysisResult,
   HermesContinuationMode,
   HermesGatewaySelection,
   HermesRequest,
@@ -12,6 +14,7 @@ import type {
   MasterChatPluginConfig,
 } from "../types.js";
 import { buildHermesCliInvocation, buildHermesCliPrompt } from "./cli.js";
+import { analyzeImageViaCli } from "./image-analysis.js";
 import { buildHermesGatewayPayload } from "./payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./capabilities.js";
 import { armProcessTimeout } from "../process.js";
@@ -21,6 +24,9 @@ export interface HermesGateway {
     request: HermesRequest,
     options?: { onEvent?: (event: HermesStreamEvent) => void },
   ): Promise<HermesResponse>;
+  analyzeImage?(
+    request: HermesImageAnalysisRequest,
+  ): Promise<HermesImageAnalysisResult>;
 }
 
 export interface SelectedHermesGateway {
@@ -321,6 +327,18 @@ export class MockHermesGateway implements HermesGateway {
       continuationMode: request.session.sessionId ? "durable" : "stateless",
     };
   }
+
+  async analyzeImage(
+    request: HermesImageAnalysisRequest,
+  ): Promise<HermesImageAnalysisResult> {
+    const inferredText = request.attachment.altText?.trim() || `Mock analysis for ${request.attachment.name}`;
+    return {
+      status: "complete",
+      summary: `Mock vision summary for ${request.attachment.name}.`,
+      extractedText: inferredText,
+      notableDetails: [`mime=${request.attachment.mimeType}`, `source=${request.attachment.source}`],
+    };
+  }
 }
 
 export class HttpHermesGateway implements HermesGateway {
@@ -388,6 +406,61 @@ export class HttpHermesGateway implements HermesGateway {
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         throw timeoutError(`Hermes HTTP gateway timed out after ${this.config.gatewayRequestTimeoutMs}ms`, error);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async analyzeImage(
+    request: HermesImageAnalysisRequest,
+  ): Promise<HermesImageAnalysisResult> {
+    const baseUrl = assertAllowedHttpAdapterUrl(this.config);
+    const path = "/images/analyze";
+    const body = JSON.stringify({
+      session: request.session,
+      metadata: request.metadata,
+      image: {
+        name: request.attachment.name,
+        mimeType: request.attachment.mimeType,
+        dataUrl: request.attachment.dataUrl,
+        altText: request.attachment.altText,
+      },
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.gatewayRequestTimeoutMs);
+    try {
+      const response = await performGatewayFetch(this.ctx, this.config, `${baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...buildSignedAdapterHeaders(this.config, "POST", path, body),
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw upstreamError(`Hermes adapter image analysis returned ${response.status}: ${await response.text()}`);
+      }
+
+      const data = await response.json() as Partial<HermesImageAnalysisResult>;
+      return {
+        status: data.status === "error" || data.status === "skipped" ? data.status : "complete",
+        summary: typeof data.summary === "string" ? data.summary : undefined,
+        extractedText: typeof data.extractedText === "string" ? data.extractedText : undefined,
+        notableDetails: Array.isArray(data.notableDetails)
+          ? data.notableDetails.filter((entry): entry is string => typeof entry === "string")
+          : undefined,
+        provider: typeof data.provider === "string" ? data.provider : undefined,
+        model: typeof data.model === "string" ? data.model : undefined,
+        errorMessage: typeof data.errorMessage === "string" ? data.errorMessage : undefined,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw timeoutError(`Hermes HTTP image analysis timed out after ${this.config.gatewayRequestTimeoutMs}ms`, error);
       }
       throw error;
     } finally {
@@ -466,6 +539,12 @@ export class CliHermesGateway implements HermesGateway {
       gatewayMode: "cli",
       continuationMode: sessionState.continuationMode,
     };
+  }
+
+  async analyzeImage(
+    request: HermesImageAnalysisRequest,
+  ): Promise<HermesImageAnalysisResult> {
+    return await analyzeImageViaCli(this.config, request);
   }
 }
 
