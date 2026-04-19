@@ -4,11 +4,13 @@ import type { HermesRequest, MasterChatPluginConfig } from "../src/types.js";
 
 function sampleRequest(): HermesRequest {
   return {
+    requestId: "req_1",
     session: {
       profileId: "paperclip-master",
       sessionId: "sess_1",
       model: "anthropic/claude-sonnet-4",
       provider: "openrouter",
+      continuationMode: "durable",
     },
     scope: {
       companyId: "comp_1",
@@ -34,12 +36,20 @@ function sampleRequest(): HermesRequest {
       issueCount: 5,
       agentCount: 2,
       projectCount: 1,
+      catalog: {
+        companies: { loaded: 1, pageSize: 50, truncated: false },
+        projects: { loaded: 1, pageSize: 50, truncated: false },
+        issues: { loaded: 5, pageSize: 50, truncated: false },
+        agents: { loaded: 2, pageSize: 50, truncated: false },
+      },
+      warnings: [],
     },
     history: [
       {
         messageId: "msg_1",
         threadId: "thr_1",
         role: "user",
+        requestId: "req_1",
         parts: [
           { type: "text", text: "Compare delivery risk." },
           {
@@ -48,6 +58,7 @@ function sampleRequest(): HermesRequest {
             name: "diagram.png",
             mimeType: "image/png",
             dataUrl: "data:image/png;base64,aGVsbG8=",
+            byteSize: 5,
             source: "inline",
           },
         ],
@@ -79,17 +90,21 @@ describe("Hermes CLI helpers", () => {
   it("builds a prompt with scope and conversation details", () => {
     const prompt = buildHermesCliPrompt(sampleRequest());
     expect(prompt).toContain("Thread title: Risk review");
+    expect(prompt).toContain("Request id: req_1");
     expect(prompt).toContain("Selected agents: CTO");
     expect(prompt).toContain("[Image attachment: diagram.png");
     expect(prompt).toContain("Compare delivery risk.");
   });
 
-  it("builds a CLI invocation that reuses the local Hermes install", () => {
+  it("builds a CLI invocation that resumes durable Hermes sessions", () => {
     const config: MasterChatPluginConfig = {
       gatewayMode: "auto",
       hermesBaseUrl: "",
       hermesCommand: "hermes",
       hermesWorkingDirectory: "/root/hermes-agent",
+      hermesAuthToken: "",
+      hermesAuthHeaderName: "authorization",
+      gatewayRequestTimeoutMs: 45_000,
       defaultProfileId: "paperclip-master",
       defaultProvider: "openrouter",
       defaultModel: "anthropic/claude-sonnet-4",
@@ -98,6 +113,12 @@ describe("Hermes CLI helpers", () => {
       availablePluginTools: ["paperclip.dashboard"],
       maxHistoryMessages: 24,
       allowInlineImageData: true,
+      maxAttachmentCount: 4,
+      maxAttachmentBytesPerFile: 5_000_000,
+      maxTotalAttachmentBytes: 12_000_000,
+      maxCatalogRecords: 1000,
+      scopePageSize: 200,
+      redactToolPayloads: true,
       enableActivityLogging: true,
     };
 
@@ -107,6 +128,8 @@ describe("Hermes CLI helpers", () => {
     expect(invocation.args).toContain("-p");
     expect(invocation.args).toContain("paperclip-master");
     expect(invocation.args).toContain("-Q");
+    expect(invocation.args).toContain("--resume");
+    expect(invocation.args).toContain("sess_1");
     expect(invocation.args).toContain("-t");
     expect(invocation.args).toContain("web,file");
     expect(invocation.args).toContain("-s");

@@ -9,14 +9,24 @@ This plugin follows the current Paperclip alpha plugin model:
 - the browser does **not** talk directly to Hermes
 - tool policies are allowlist-driven and live in worker-controlled state/config
 
+## Runtime controls now enforced in code
+
+- company/project/issue/agent scope references are validated against company-scoped Paperclip records
+- attachment count/type/per-file-size/total-size limits are enforced in both the UI and worker
+- inline image data can be disabled with `allowInlineImageData=false`
+- the worker allows only one in-flight send per thread at a time
+- retry replays only the failed assistant continuation instead of duplicating the user turn
+- tool traces are redacted before persistence when `redactToolPayloads=true`
+- HTTP adapter mode fails closed unless `hermesAuthToken` is configured
+
 ## Recommended controls
 
 1. **Run shared instances in authenticated mode** — avoid `local_trusted` outside single-operator environments.
 2. **Prefer `gatewayMode=auto` or `gatewayMode=cli` only on trusted single-host deployments** — these modes execute the local Hermes CLI from the Paperclip host.
 3. **Prefer `gatewayMode=http` behind an internal adapter service** when you want a stricter process boundary, richer request auditing, or centralized provider policy.
 4. **Keep `availablePluginTools` minimal** — default-deny dangerous tools.
-5. **Audit activity** — the worker already writes lightweight activity summaries; extend this in production.
-6. **Rate limit upstream of the adapter or Paperclip host** — current plugin code does not enforce infra-level quotas by itself.
+5. **Audit activity** — the worker already writes lightweight activity summaries and failure metrics; extend this in production.
+6. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
 
 ## Current runtime caveats
 

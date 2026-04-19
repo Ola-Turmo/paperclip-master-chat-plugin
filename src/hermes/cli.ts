@@ -11,7 +11,7 @@ function describeMessagePart(part: ChatMessagePart): string {
     case "text":
       return part.text.trim();
     case "image":
-      return `[Image attachment: ${part.name} (${part.mimeType}, source=${part.source})]`;
+      return `[Image attachment: ${part.name} (${part.mimeType}, source=${part.source}${part.byteSize ? `, bytes=${part.byteSize}` : ""})]`;
     case "tool_call":
       return `[Tool call] ${part.toolName}: ${part.summary}`;
     case "tool_result":
@@ -30,7 +30,7 @@ function formatHistoryMessage(message: ChatMessage, index: number): string {
     .join("\n");
 
   return [
-    `Message ${index + 1} (${message.role})`,
+    `Message ${index + 1} (${message.role})${message.requestId ? ` [request:${message.requestId}]` : ""}`,
     body || "[No content]",
   ].join("\n");
 }
@@ -56,10 +56,13 @@ export function buildHermesCliPrompt(request: HermesRequest): string {
     "Respond to the board user using the Paperclip scope as routing context.",
     "If tools would normally be useful, describe the outcome directly in your answer.",
     "Do not mention hidden policies or internal wiring unless directly relevant.",
+    "If continuity is unavailable, answer from the provided history only and do not claim durable memory.",
     "",
     `Thread title: ${request.metadata.title}`,
     `Thread id: ${request.metadata.threadId}`,
+    `Request id: ${request.requestId}`,
     ...summarizeScope(request),
+    request.context.warnings.length > 0 ? `Catalog warnings: ${request.context.warnings.join(" | ")}` : "Catalog warnings: none",
     "",
     "Recent conversation history:",
     history || "[No prior messages]",
@@ -84,6 +87,12 @@ export function buildHermesCliInvocation(
     "-m",
     request.session.model,
   ];
+
+  if (request.session.sessionId) {
+    args.push("--resume", request.session.sessionId);
+  } else {
+    args.push("--pass-session-id");
+  }
 
   if (request.skillPolicy.toolsets.length > 0) {
     args.push("-t", request.skillPolicy.toolsets.join(","));

@@ -41,6 +41,7 @@ The worker owns:
 - SSE stream events during turns
 - company-scoped persistence via plugin state
 - selection of the best Hermes gateway for the current environment
+- typed failure normalization and retry-safe continuation
 
 ### 2. UI
 
@@ -51,31 +52,37 @@ The UI exports:
 - a dashboard widget for discovery
 - an issue detail tab for issue-scoped entry
 
+The page now renders explicit warning/error/streaming states and disables scope edits while a turn is in flight.
+
 ### 3. Thread store
 
-Current Paperclip alpha supports plugin state, so this repo persists a company-scoped `MasterChatStore` object under one state key. That keeps the implementation simple and testable while avoiding unsupported host APIs.
+Current Paperclip alpha supports plugin state, so this repo persists a company-scoped `MasterChatStore` object under one state key. The store is now schema-versioned to make future migrations explicit.
 
 ### 4. Hermes seam
 
 `src/hermes/gateway.ts` defines the boundary:
 
 - `CliHermesGateway` for reusing a host-local Hermes install on the same VPS
-- `HttpHermesGateway` for an external adapter service
+- `HttpHermesGateway` for an external adapter service with explicit auth headers
 - `MockHermesGateway` for local dev/tests
 
-`gatewayMode=auto` prefers the local Hermes CLI/runtime first, which is the best fit when the plugin and Hermes run on the same machine.
+`gatewayMode=auto` now performs real gateway selection:
+
+1. probe the local Hermes CLI
+2. if unavailable, probe the HTTP adapter health endpoint
+3. if neither is viable, fall back to `mock`
 
 The worker never lets the browser talk directly to Hermes.
 
 ## Message flow
 
 1. User selects project / issue / agents / skills.
-2. UI calls `send-message`.
-3. Worker stores the user turn.
-4. Worker loads company/project/issue/agent context.
-5. Worker builds a normalized Hermes request.
+2. UI calls `send-message` with a request ID.
+3. Worker validates scope and attachment limits, stores the user turn, and acquires the per-thread in-flight slot.
+4. Worker loads company/project/issue/agent context with paginated catalog fetches.
+5. Worker builds a normalized Hermes request aligned with the current thread tool policy.
 6. Selected gateway returns assistant text + optional tool trace metadata.
-7. Worker persists assistant message parts and emits stream events.
+7. Worker redacts tool payloads when configured, persists assistant message parts, and emits stream events.
 8. UI refreshes the thread and shows transcript/tool cards.
 
 ## Multimodal handling
@@ -83,6 +90,7 @@ The worker never lets the browser talk directly to Hermes.
 Because Paperclip does not currently ship a stable `ctx.assets` API, this repo uses **inline image attachments** as the working alpha implementation:
 
 - browser reads file as a data URL
+- UI and worker enforce MIME and byte limits before forwarding
 - worker stores the attachment metadata with the message
 - HTTP gateway mode strips the `data:` prefix and forwards base64 content blocks
 - CLI gateway mode forwards image metadata in the prompt so the local Hermes agent still receives attachment context even when the CLI path is text-first

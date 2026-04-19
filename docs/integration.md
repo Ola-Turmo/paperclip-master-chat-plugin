@@ -13,15 +13,28 @@ The worker shells out to the configured Hermes binary and passes:
 - model override (`-m`)
 - enabled toolsets (`-t`)
 - enabled skills (`-s`)
+- `--resume <sessionId>` when a durable Hermes session is already known
 - a normalized Paperclip-aware prompt assembled from thread scope and history
 
 Representative invocation:
 
 ```bash
-hermes -p paperclip-master chat -Q --source tool   --provider openrouter   -m anthropic/claude-sonnet-4   -t web,file,paperclip-context   -s paperclip-search,issue-summarize   -q "<normalized Paperclip scope + history prompt>"
+hermes -p paperclip-master chat -Q --source tool \
+  --provider openrouter \
+  -m anthropic/claude-sonnet-4 \
+  --resume sess_existing_optional \
+  -t web,file,paperclip-context \
+  -s paperclip-search,issue-summarize \
+  -q "<normalized Paperclip scope + history prompt>"
 ```
 
 This mode reuses the **existing Hermes agent installation on the host** instead of requiring a separate adapter service.
+
+### Session continuity semantics
+
+- Existing CLI-backed threads reuse `sessionId` with `--resume`.
+- New CLI-backed threads are treated as `stateless` until a real Hermes session ID can be proven.
+- HTTP mode remains the preferred path for production-grade durable continuation.
 
 ### 2. External HTTP adapter (`gatewayMode=http`)
 
@@ -32,6 +45,7 @@ The plugin's alternative production seam is an HTTP adapter service.
 ```http
 POST /sessions/continue
 content-type: application/json
+authorization: Bearer <token>
 ```
 
 Request body shape:
@@ -71,7 +85,14 @@ Request body shape:
     "selectedAgents": [{ "id": "agt_cto", "name": "CTO" }],
     "issueCount": 12,
     "agentCount": 4,
-    "projectCount": 3
+    "projectCount": 3,
+    "catalog": {
+      "companies": { "loaded": 1, "pageSize": 200, "truncated": false },
+      "projects": { "loaded": 3, "pageSize": 200, "truncated": false },
+      "issues": { "loaded": 12, "pageSize": 200, "truncated": false },
+      "agents": { "loaded": 4, "pageSize": 200, "truncated": false }
+    },
+    "warnings": []
   },
   "tools": [
     {
@@ -107,7 +128,9 @@ Request body shape:
   ],
   "provider": "openrouter",
   "model": "anthropic/claude-sonnet-4",
-  "sessionId": "sess_new_or_existing"
+  "sessionId": "sess_new_or_existing",
+  "gatewayMode": "http",
+  "continuationMode": "durable"
 }
 ```
 
@@ -119,14 +142,15 @@ The external adapter service should:
 2. Translate plugin-provided scope and tools into Hermes system/context prompts.
 3. Route multimodal blocks to Hermes in the form expected by the target provider.
 4. Return normalized text + tool traces.
-5. Optionally expose a richer streaming protocol in future iterations.
+5. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
 
 ## Paperclip runtime considerations
 
-- The worker currently persists thread state through `ctx.state`.
+- The worker persists thread state through `ctx.state` with a schema version.
 - UI calls use the built-in plugin bridge only.
 - The browser never needs Hermes secrets or direct provider access.
-- When the plugin runs on the same host as Hermes, `gatewayMode=auto` avoids standing up a second adapter process unless you want one.
+- Scope selectors are loaded paginated and now surface truncation warnings instead of silently hiding records.
+- Retry re-runs only the failed assistant continuation; it does not create a new user turn.
 
 ## Suggested deployment shapes
 
@@ -139,7 +163,7 @@ sequenceDiagram
   participant C as Local Hermes CLI/runtime
 
   UI->>W: send-message
-  W->>C: hermes chat -Q ...
+  W->>C: hermes chat -Q --resume ...
   C-->>W: assistant text
   W-->>UI: persisted thread + stream events
 ```

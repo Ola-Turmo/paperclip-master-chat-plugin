@@ -49,11 +49,21 @@ export const DEFAULT_PLUGIN_TOOLS = [
   "plugin.linear:search-issues",
 ] as const;
 
+export const SAFE_INLINE_IMAGE_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+
 export const DEFAULT_CONFIG = {
   gatewayMode: "auto",
   hermesBaseUrl: "",
   hermesCommand: "hermes",
   hermesWorkingDirectory: "",
+  hermesAuthToken: "",
+  hermesAuthHeaderName: "authorization",
+  gatewayRequestTimeoutMs: 45_000,
   defaultProfileId: "paperclip-master",
   defaultProvider: "openrouter",
   defaultModel: "anthropic/claude-sonnet-4",
@@ -62,5 +72,11 @@ export const DEFAULT_CONFIG = {
   availablePluginTools: [...DEFAULT_PLUGIN_TOOLS],
   maxHistoryMessages: 24,
   allowInlineImageData: true,
+  maxAttachmentCount: 4,
+  maxAttachmentBytesPerFile: 5_000_000,
+  maxTotalAttachmentBytes: 12_000_000,
+  maxCatalogRecords: 1000,
+  scopePageSize: 200,
+  redactToolPayloads: true,
   enableActivityLogging: true,
 } as const;

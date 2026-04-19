@@ -1,5 +1,17 @@
 export type ChatMode = "single_agent" | "multi_agent" | "company_wide";
 export type HermesGatewayMode = "auto" | "mock" | "http" | "cli";
+export type HermesGatewaySelection = "mock" | "http" | "cli";
+export type HermesContinuationMode = "durable" | "stateless";
+export type MasterChatErrorCode =
+  | "validation"
+  | "authorization"
+  | "not_found"
+  | "timeout"
+  | "unavailable"
+  | "config"
+  | "upstream"
+  | "concurrency"
+  | "unknown";
 
 export interface ThreadScope {
   companyId: string;
@@ -26,6 +38,7 @@ export interface InlineImageAttachment {
   name: string;
   mimeType: string;
   dataUrl: string;
+  byteSize?: number;
   altText?: string;
   assetId?: string;
   source: "inline" | "paperclip-asset" | "remote";
@@ -56,6 +69,8 @@ export interface StatusMessagePart {
   type: "status";
   status: string;
   detail?: string;
+  code?: MasterChatErrorCode;
+  retryable?: boolean;
 }
 
 export type ChatMessagePart =
@@ -76,6 +91,7 @@ export interface ChatMessage {
   routing: ThreadScope;
   toolPolicy: ToolPolicy;
   status: ChatMessageStatus;
+  requestId?: string;
   createdAt: string;
   updatedAt: string;
   errorMessage?: string;
@@ -86,6 +102,7 @@ export interface HermesSessionConfig {
   sessionId?: string;
   model: string;
   provider: string;
+  continuationMode?: HermesContinuationMode;
 }
 
 export interface ChatThread {
@@ -99,12 +116,20 @@ export interface ChatThread {
     visibility: "company_scoped" | "private";
     archivedAt?: string;
     lastAssistantPreview?: string;
+    lastErrorCode?: MasterChatErrorCode;
+    lastErrorMessage?: string;
+    lastFailureAt?: string;
+    gatewayMode?: HermesGatewaySelection;
+    gatewayReason?: string;
+    inFlightRequestId?: string;
+    lastUserMessageId?: string;
   };
   createdAt: string;
   updatedAt: string;
 }
 
 export interface MasterChatStore {
+  schemaVersion: number;
   threads: ChatThread[];
   messages: ChatMessage[];
 }
@@ -116,6 +141,28 @@ export interface AvailableContextOption {
   description?: string | null;
 }
 
+export interface ContextCollectionMeta {
+  loaded: number;
+  pageSize: number;
+  truncated: boolean;
+}
+
+export interface ContextCatalogMeta {
+  companies: ContextCollectionMeta;
+  projects: ContextCollectionMeta;
+  issues: ContextCollectionMeta;
+  agents: ContextCollectionMeta;
+}
+
+export interface CompanyScopedOptions {
+  companies: AvailableContextOption[];
+  projects: AvailableContextOption[];
+  issues: AvailableContextOption[];
+  agents: AvailableContextOption[];
+  catalog: ContextCatalogMeta;
+  warnings: string[];
+}
+
 export interface ScopeContextSnapshot {
   company?: AvailableContextOption;
   project?: AvailableContextOption;
@@ -124,6 +171,8 @@ export interface ScopeContextSnapshot {
   issueCount: number;
   agentCount: number;
   projectCount: number;
+  catalog: ContextCatalogMeta;
+  warnings: string[];
 }
 
 export interface ThreadSummary {
@@ -140,6 +189,9 @@ export interface MasterChatPluginConfig {
   hermesBaseUrl: string;
   hermesCommand: string;
   hermesWorkingDirectory?: string;
+  hermesAuthToken: string;
+  hermesAuthHeaderName: string;
+  gatewayRequestTimeoutMs: number;
   defaultProfileId: string;
   defaultProvider: string;
   defaultModel: string;
@@ -148,6 +200,12 @@ export interface MasterChatPluginConfig {
   availablePluginTools: string[];
   maxHistoryMessages: number;
   allowInlineImageData: boolean;
+  maxAttachmentCount: number;
+  maxAttachmentBytesPerFile: number;
+  maxTotalAttachmentBytes: number;
+  maxCatalogRecords: number;
+  scopePageSize: number;
+  redactToolPayloads: boolean;
   enableActivityLogging: boolean;
 }
 
@@ -168,6 +226,8 @@ export interface BootstrapData {
     skills: SkillPolicy;
     hermes: Omit<HermesSessionConfig, "sessionId">;
   };
+  catalog: ContextCatalogMeta;
+  warnings: string[];
   config: MasterChatPluginConfig;
 }
 
@@ -176,6 +236,7 @@ export interface ThreadDetailData {
   messages: ChatMessage[];
   context: ScopeContextSnapshot;
   streamChannel: string;
+  warnings: string[];
 }
 
 export interface CreateThreadInput {
@@ -192,11 +253,13 @@ export interface SendMessageInput {
   attachments?: InlineImageAttachment[];
   scope?: Partial<ThreadScope>;
   skills?: Partial<SkillPolicy>;
+  requestId?: string;
 }
 
 export interface RetryMessageInput {
   companyId: string;
   threadId: string;
+  requestId?: string;
 }
 
 export interface HermesToolDescriptor {
@@ -206,6 +269,7 @@ export interface HermesToolDescriptor {
 }
 
 export interface HermesRequest {
+  requestId: string;
   session: HermesSessionConfig;
   scope: ThreadScope;
   skillPolicy: SkillPolicy;
@@ -236,4 +300,6 @@ export interface HermesResponse {
   provider: string;
   model: string;
   sessionId: string;
+  gatewayMode: HermesGatewaySelection;
+  continuationMode: HermesContinuationMode;
 }

@@ -16,6 +16,7 @@ describe("view-model helpers", () => {
       messageId: "msg_1",
       threadId: "thr_1",
       role: "assistant",
+      requestId: "req_1",
       parts: [{ type: "text", text: "First line" }, { type: "text", text: "Second line" }],
       routing: {
         companyId: "comp_1",

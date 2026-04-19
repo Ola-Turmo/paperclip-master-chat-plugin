@@ -5,6 +5,7 @@ import type { HermesRequest } from "../src/types.js";
 describe("buildHermesGatewayPayload", () => {
   it("converts text and image parts into Hermes content blocks", () => {
     const request: HermesRequest = {
+      requestId: "req_1",
       session: {
         profileId: "paperclip-master",
         sessionId: "sess_1",
@@ -35,12 +36,20 @@ describe("buildHermesGatewayPayload", () => {
         issueCount: 2,
         agentCount: 1,
         projectCount: 1,
+        catalog: {
+          companies: { loaded: 1, pageSize: 50, truncated: false },
+          projects: { loaded: 1, pageSize: 50, truncated: false },
+          issues: { loaded: 2, pageSize: 50, truncated: false },
+          agents: { loaded: 1, pageSize: 50, truncated: false },
+        },
+        warnings: [],
       },
       history: [
         {
           messageId: "msg_1",
           threadId: "thr_1",
           role: "user",
+          requestId: "req_1",
           parts: [
             { type: "text", text: "Compare delivery risk." },
             {

@@ -10,6 +10,8 @@
     "dev:ui": "paperclip-plugin-dev-server --root . --ui-dir dist/ui --port 4177",
     "test": "vitest run --config ./vitest.config.ts",
     "typecheck": "tsc --noEmit",
+    "audit:prod": "pnpm audit --prod --audit-level moderate",
+    "repo:check": "git diff --check",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
     "vps:check": "node ./scripts/vps-reuse-check.mjs"
   },

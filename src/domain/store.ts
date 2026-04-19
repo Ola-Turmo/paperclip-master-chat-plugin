@@ -14,6 +14,7 @@ import type {
 } from "../types.js";
 
 export const STORE_STATE_KEY = "master-chat-store";
+export const STORE_SCHEMA_VERSION = 2;
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -35,21 +36,34 @@ export function createDefaultSkillPolicy(config: MasterChatPluginConfig): SkillP
   };
 }
 
-export function createDefaultToolPolicy(config: MasterChatPluginConfig): ToolPolicy {
+export function createToolPolicy(config: MasterChatPluginConfig, skills: SkillPolicy): ToolPolicy {
   return {
-    allowedPluginTools: [...config.availablePluginTools],
-    allowedHermesToolsets: [...config.defaultToolsets],
+    allowedPluginTools: [...new Set(config.availablePluginTools)],
+    allowedHermesToolsets: [...new Set(skills.toolsets)],
   };
 }
 
 export function createEmptyStore(): MasterChatStore {
-  return { threads: [], messages: [] };
+  return {
+    schemaVersion: STORE_SCHEMA_VERSION,
+    threads: [],
+    messages: [],
+  };
+}
+
+export function migrateStore(store: MasterChatStore | null | undefined): MasterChatStore {
+  if (!store) return createEmptyStore();
+  return {
+    schemaVersion: STORE_SCHEMA_VERSION,
+    threads: Array.isArray(store.threads) ? store.threads : [],
+    messages: Array.isArray(store.messages) ? store.messages : [],
+  };
 }
 
 export function inferScopeMode(scope: ThreadScope): ThreadScope {
   if (scope.selectedAgentIds.length > 1) return { ...scope, mode: "multi_agent" };
   if (scope.selectedAgentIds.length === 1) return { ...scope, mode: "single_agent" };
-  return { ...scope, mode: scope.mode ?? "company_wide" };
+  return { ...scope, mode: "company_wide" };
 }
 
 export function buildThreadTitle(text: string, fallback = "New master chat thread"): string {
@@ -75,7 +89,7 @@ export async function loadStore(ctx: PluginContext, companyId: string): Promise<
     scopeId: companyId,
     stateKey: STORE_STATE_KEY,
   }) as MasterChatStore | null;
-  return loaded ?? createEmptyStore();
+  return migrateStore(loaded);
 }
 
 export async function saveStore(ctx: PluginContext, companyId: string, store: MasterChatStore): Promise<void> {
@@ -83,7 +97,10 @@ export async function saveStore(ctx: PluginContext, companyId: string, store: Ma
     scopeKind: "company",
     scopeId: companyId,
     stateKey: STORE_STATE_KEY,
-  }, store);
+  }, {
+    ...migrateStore(store),
+    schemaVersion: STORE_SCHEMA_VERSION,
+  });
 }
 
 export function listThreadSummaries(store: MasterChatStore): ThreadSummary[] {
@@ -129,6 +146,16 @@ export function upsertMessage(store: MasterChatStore, message: ChatMessage): voi
   store.messages[index] = message;
 }
 
+export function findMessageByRequestId(
+  store: MasterChatStore,
+  threadId: string,
+  requestId: string,
+  role?: ChatMessage["role"],
+): ChatMessage | undefined {
+  return getThreadMessages(store, threadId)
+    .find((message) => message.requestId === requestId && (!role || message.role === role));
+}
+
 export function createThreadRecord(
   input: CreateThreadInput,
   config: MasterChatPluginConfig,
@@ -143,9 +170,9 @@ export function createThreadRecord(
   const skills: SkillPolicy = {
     ...createDefaultSkillPolicy(config),
     ...(input.skills ?? {}),
-    enabled: input.skills?.enabled ? [...input.skills.enabled] : [...config.defaultEnabledSkills],
-    disabled: input.skills?.disabled ? [...input.skills.disabled] : [],
-    toolsets: input.skills?.toolsets ? [...input.skills.toolsets] : [...config.defaultToolsets],
+    enabled: input.skills?.enabled ? [...new Set(input.skills.enabled)] : [...config.defaultEnabledSkills],
+    disabled: input.skills?.disabled ? [...new Set(input.skills.disabled)] : [],
+    toolsets: input.skills?.toolsets ? [...new Set(input.skills.toolsets)] : [...config.defaultToolsets],
   };
   return {
     threadId: randomUUID(),
@@ -155,6 +182,7 @@ export function createThreadRecord(
       profileId: config.defaultProfileId,
       model: config.defaultModel,
       provider: config.defaultProvider,
+      continuationMode: "stateless",
     },
     skills,
     metadata: {
@@ -171,6 +199,7 @@ export function createMessageRecord(input: {
   parts: ChatMessage["parts"];
   routing: ThreadScope;
   toolPolicy: ToolPolicy;
+  requestId?: string;
   status?: ChatMessage["status"];
   errorMessage?: string;
 }): ChatMessage {
@@ -182,6 +211,7 @@ export function createMessageRecord(input: {
     parts: input.parts,
     routing: inferScopeMode(input.routing),
     toolPolicy: input.toolPolicy,
+    requestId: input.requestId,
     status: input.status ?? "complete",
     createdAt,
     updatedAt: createdAt,
@@ -193,6 +223,10 @@ export function touchThread(thread: ChatThread, patch?: Partial<ChatThread>): Ch
   return {
     ...thread,
     ...patch,
+    metadata: {
+      ...thread.metadata,
+      ...(patch?.metadata ?? {}),
+    },
     updatedAt: nowIso(),
   };
 }
