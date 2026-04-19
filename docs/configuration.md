@@ -81,6 +81,20 @@ The plugin uses manifest-based instance configuration.
 }
 ```
 
+Recommended bundled adapter environment on this VPS:
+
+```bash
+MASTER_CHAT_ADAPTER_TOKEN=replace-me \
+MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
+MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+MASTER_CHAT_ADAPTER_DEFAULT_PROFILE=default \
+MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER=auto \
+MASTER_CHAT_ADAPTER_DEFAULT_MODEL=MiniMax-M2.7 \
+pnpm adapter:start
+```
+
+The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes host defaults instead of redundantly forcing provider/model flags that are already satisfied by the local profile.
+
 ### Force the local CLI explicitly
 
 ```json
@@ -99,6 +113,7 @@ The plugin uses manifest-based instance configuration.
 - Prefer environment- or instance-specific routing in the adapter service rather than exposing provider secrets to the plugin UI.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
 - Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.
+- Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, and verifies both CLI and HTTP paths end to end.
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
 - Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.
 

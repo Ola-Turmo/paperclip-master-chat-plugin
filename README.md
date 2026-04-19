@@ -68,6 +68,7 @@ pnpm audit:prod
 
 ```bash
 pnpm vps:check
+pnpm vps:smoke
 ```
 
 On this VPS, the script detects whether:
@@ -75,6 +76,8 @@ On this VPS, the script detects whether:
 - `/root/hermes-agent` exists as a local Hermes checkout
 - `/root/work/paperclip` exists as a local Paperclip checkout
 - local Hermes ports such as `8787` or `8642` are listening
+
+`pnpm vps:smoke` goes further: it rebuilds the repo, refreshes the plugin inside the local Paperclip checkout, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and then verifies a live HTTP turn through Paperclip as well.
 
 ### 4) Build for Paperclip
 
@@ -142,6 +145,9 @@ You can run the repo's local Hermes adapter on the VPS:
 MASTER_CHAT_ADAPTER_TOKEN=change-me \
 MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
 MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+MASTER_CHAT_ADAPTER_DEFAULT_PROFILE=default \
+MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER=auto \
+MASTER_CHAT_ADAPTER_DEFAULT_MODEL=MiniMax-M2.7 \
 pnpm adapter:start
 ```
 
@@ -154,6 +160,8 @@ Then point the plugin at it:
   "hermesAuthToken": "change-me"
 }
 ```
+
+When the bundled adapter is reusing the same host defaults as the Paperclip plugin, set `MASTER_CHAT_ADAPTER_DEFAULT_*` to the same profile/provider/model values. That keeps the adapter from redundantly forcing CLI flags that are already satisfied by the Hermes host profile.
 
 ### Session continuity semantics
 
@@ -205,6 +213,7 @@ pnpm test
 pnpm build
 pnpm audit:prod
 pnpm vps:check
+pnpm vps:smoke
 ```
 
 ## Status

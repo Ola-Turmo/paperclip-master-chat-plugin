@@ -61,6 +61,36 @@ function authHeaderValue(config: MasterChatPluginConfig): string {
   return config.hermesAuthToken;
 }
 
+function isTrustedLocalAdapterUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "localhost" || hostname === "::1" || hostname === "[::1]") return true;
+    if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true;
+    if (/^10(?:\.\d{1,3}){3}$/.test(hostname)) return true;
+    if (/^192\.168(?:\.\d{1,3}){2}$/.test(hostname)) return true;
+    const match172 = hostname.match(/^172\.(\d{1,3})(?:\.\d{1,3}){2}$/);
+    if (match172) {
+      const octet = Number(match172[1]);
+      if (octet >= 16 && octet <= 31) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function performGatewayFetch(
+  ctx: PluginContext,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  if (isTrustedLocalAdapterUrl(url)) {
+    return await fetch(url, init);
+  }
+  return await ctx.http.fetch(url, init);
+}
+
 async function runCommand(command: string, args: string[], cwd: string | undefined, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -115,7 +145,7 @@ async function probeHttpGateway(ctx: PluginContext, config: MasterChatPluginConf
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.min(config.gatewayRequestTimeoutMs, 5_000));
   try {
-    const response = await ctx.http.fetch(`${config.hermesBaseUrl.replace(/\/$/, "")}/health`, {
+    const response = await performGatewayFetch(ctx, `${config.hermesBaseUrl.replace(/\/$/, "")}/health`, {
       method: "GET",
       headers: {
         [config.hermesAuthHeaderName]: authHeaderValue(config),
@@ -235,7 +265,7 @@ export class HttpHermesGateway implements HermesGateway {
     const timeout = setTimeout(() => controller.abort(), this.config.gatewayRequestTimeoutMs);
 
     try {
-      const response = await this.ctx.http.fetch(`${this.config.hermesBaseUrl.replace(/\/$/, "")}/sessions/continue`, {
+      const response = await performGatewayFetch(this.ctx, `${this.config.hermesBaseUrl.replace(/\/$/, "")}/sessions/continue`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

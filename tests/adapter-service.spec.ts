@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId } from "../src/adapter-service.js";
+import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId } from "../src/adapter-service.js";
 import type { HermesGatewayPayload } from "../src/hermes/payload.js";
 
 function samplePayload(): HermesGatewayPayload {
@@ -75,6 +75,9 @@ describe("adapter service helpers", () => {
       host: "127.0.0.1",
       hermesCommand: "hermes",
       hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "auto",
+      defaultModel: "anthropic/claude-sonnet-4",
       authToken: "secret-token",
       authHeaderName: "authorization",
       timeoutMs: 45_000,
@@ -85,10 +88,37 @@ describe("adapter service helpers", () => {
       host: "127.0.0.1",
       hermesCommand: "hermes",
       hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "auto",
+      defaultModel: "anthropic/claude-sonnet-4",
       authToken: "secret-token",
       authHeaderName: "authorization",
       timeoutMs: 45_000,
     })).toBe(true);
+  });
+
+
+  it("keeps Hermes capability preferences in the prompt instead of forwarding -s/-t flags", async () => {
+    const invocation = await buildAdapterInvocation({
+      port: 8788,
+      host: "127.0.0.1",
+      hermesCommand: "hermes",
+      hermesWorkingDirectory: "",
+      defaultProfileId: "paperclip-master",
+      defaultProvider: "openrouter",
+      defaultModel: "anthropic/claude-sonnet-4",
+      authToken: "secret-token",
+      authHeaderName: "authorization",
+      timeoutMs: 45_000,
+    }, samplePayload());
+
+    expect(invocation.invocation.args).not.toContain("-s");
+    expect(invocation.invocation.args).not.toContain("-t");
+    expect(invocation.invocation.args).not.toContain("--provider");
+    expect(invocation.invocation.args).not.toContain("-m");
+    expect(invocation.invocation.args.at(-1)).toContain("Hermes capability preferences: None");
+    expect(invocation.invocation.args.at(-1)).toContain("Hermes runtime tools requested: web, file");
+    expect(invocation.warnings).toContain("Skipped 1 unavailable Hermes skill preference(s).");
   });
 
   it("parses Hermes session IDs from output", () => {

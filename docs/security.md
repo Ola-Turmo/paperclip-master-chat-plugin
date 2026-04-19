@@ -20,15 +20,18 @@ This plugin follows the current Paperclip alpha plugin model:
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
 - the bundled local adapter service requires the configured auth header/token before it will continue sessions
 - unsupported Hermes capability preferences are filtered before local CLI or adapter requests so host-specific catalogs do not become runtime footguns
+- loopback/private adapter URLs are treated as trusted-host deployments and use direct Node `fetch` instead of Paperclip's SSRF-guarded `ctx.http.fetch`
 
 ## Recommended controls
 
 1. **Run shared instances in authenticated mode** — avoid `local_trusted` outside single-operator environments.
 2. **Prefer `gatewayMode=auto` or `gatewayMode=cli` only on trusted single-host deployments** — these modes execute the local Hermes CLI from the Paperclip host.
 3. **Prefer `gatewayMode=http` behind an internal adapter service** when you want a stricter process boundary, richer request auditing, or centralized provider policy.
+4. **Treat loopback/private adapter URLs as a trusted-host feature, not a general remote deployment pattern.** The direct-fetch bypass exists so a same-VPS adapter can work even though Paperclip's guarded HTTP client blocks private ranges by design.
 4. **Keep `availablePluginTools` minimal** — default-deny dangerous tools.
 5. **Audit activity** — the worker already writes lightweight activity summaries and failure metrics; extend this in production.
 6. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
+7. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
 
 ## Current runtime caveats
 

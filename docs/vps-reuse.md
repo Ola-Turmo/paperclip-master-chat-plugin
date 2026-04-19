@@ -29,6 +29,9 @@ If you want an HTTP boundary while still reusing the same local Hermes install, 
 MASTER_CHAT_ADAPTER_TOKEN=change-me \
 MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
 MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+MASTER_CHAT_ADAPTER_DEFAULT_PROFILE=default \
+MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER=auto \
+MASTER_CHAT_ADAPTER_DEFAULT_MODEL=MiniMax-M2.7 \
 pnpm adapter:start
 ```
 
@@ -73,6 +76,7 @@ pnpm build
 
 ```bash
 pnpm vps:check
+pnpm vps:smoke
 ```
 
 3. Install into the local Paperclip checkout if desired:
@@ -106,6 +110,8 @@ Or, for the bundled local adapter service:
   "hermesAuthToken": "change-me"
 }
 ```
+
+`pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and verifies a live HTTP turn through Paperclip too.
 
 ## Why this is useful
 

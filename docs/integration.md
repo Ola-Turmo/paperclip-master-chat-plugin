@@ -126,8 +126,13 @@ Start it like this:
 MASTER_CHAT_ADAPTER_TOKEN=change-me \
 MASTER_CHAT_HERMES_COMMAND=/usr/local/bin/hermes \
 MASTER_CHAT_HERMES_CWD=/root/hermes-agent \
+MASTER_CHAT_ADAPTER_DEFAULT_PROFILE=default \
+MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER=auto \
+MASTER_CHAT_ADAPTER_DEFAULT_MODEL=MiniMax-M2.7 \
 pnpm adapter:start
 ```
+
+Set the `MASTER_CHAT_ADAPTER_DEFAULT_*` variables to the same profile/provider/model defaults used by the plugin when the adapter is reusing the same host Hermes install. That avoids re-forcing CLI flags that the local profile already covers.
 
 The service exposes:
 
@@ -165,6 +170,7 @@ The external adapter service should:
 4. Filter unsupported Hermes skills/toolsets against the host runtime before passing `-s/-t`.
 5. Return normalized text + tool traces.
 6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
+7. Support trusted loopback/private deployments explicitly. This repo now uses direct Node `fetch` for loopback/private adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks those ranges.
 
 ## Paperclip runtime considerations
 

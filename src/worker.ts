@@ -564,12 +564,16 @@ async function retryLastTurnAction(
   });
 }
 
+const pluginState: { currentConfig: MasterChatPluginConfig } = {
+  currentConfig: normalizeConfig(DEFAULT_CONFIG),
+};
+
 const plugin = definePlugin({
   async setup(ctx) {
-    const config = normalizeConfig(await ctx.config.get());
+    pluginState.currentConfig = normalizeConfig(await ctx.config.get());
 
-    ctx.data.register(DATA_KEYS.pluginConfig, async () => config);
-    ctx.data.register(DATA_KEYS.bootstrap, async (params) => buildBootstrap(ctx, config, requireCompanyId(params)));
+    ctx.data.register(DATA_KEYS.pluginConfig, async () => pluginState.currentConfig);
+    ctx.data.register(DATA_KEYS.bootstrap, async (params) => buildBootstrap(ctx, pluginState.currentConfig, requireCompanyId(params)));
     ctx.data.register(DATA_KEYS.threadList, async (params) => {
       const companyId = requireCompanyId(params);
       const store = await loadStore(ctx, companyId);
@@ -579,12 +583,12 @@ const plugin = definePlugin({
       const companyId = requireCompanyId(params);
       const threadId = typeof params.threadId === "string" ? params.threadId : "";
       if (!threadId) throw validationError("threadId is required");
-      return await buildThreadDetail(ctx, config, companyId, threadId);
+      return await buildThreadDetail(ctx, pluginState.currentConfig, companyId, threadId);
     });
 
-    ctx.actions.register(ACTION_KEYS.createThread, async (params) => await createThreadAction(ctx, config, params));
-    ctx.actions.register(ACTION_KEYS.sendMessage, async (params) => await sendMessageAction(ctx, config, params));
-    ctx.actions.register(ACTION_KEYS.retryLastTurn, async (params) => await retryLastTurnAction(ctx, config, params));
+    ctx.actions.register(ACTION_KEYS.createThread, async (params) => await createThreadAction(ctx, pluginState.currentConfig, params));
+    ctx.actions.register(ACTION_KEYS.sendMessage, async (params) => await sendMessageAction(ctx, pluginState.currentConfig, params));
+    ctx.actions.register(ACTION_KEYS.retryLastTurn, async (params) => await retryLastTurnAction(ctx, pluginState.currentConfig, params));
     ctx.actions.register(ACTION_KEYS.archiveThread, async (params) => {
       const companyId = requireCompanyId(params);
       const threadId = typeof params.threadId === "string" ? params.threadId : "";
@@ -606,7 +610,7 @@ const plugin = definePlugin({
       if (!threadId) throw validationError("threadId is required");
       const store = await loadStore(ctx, companyId);
       const thread = getThread(store, threadId);
-      const options = await loadCompanyScopedOptions(ctx, companyId, config);
+      const options = await loadCompanyScopedOptions(ctx, companyId, pluginState.currentConfig);
       const scope = normalizeScope(thread.scope, params.scope as Partial<ThreadScope> | undefined);
       validateScopeAgainstOptions(scope, options);
       upsertThread(store, touchThread(thread, { scope }));
@@ -620,11 +624,16 @@ const plugin = definePlugin({
       const store = await loadStore(ctx, companyId);
       const thread = getThread(store, threadId);
       upsertThread(store, touchThread(thread, {
-        skills: normalizeSkillPatch(config, params.skills as Partial<SkillPolicy> | undefined),
+        skills: normalizeSkillPatch(pluginState.currentConfig, params.skills as Partial<SkillPolicy> | undefined),
       }));
       await saveStore(ctx, companyId, store);
       return { ok: true };
     });
+  },
+
+  async onConfigChanged(newConfig) {
+    const normalized = normalizeConfig(newConfig);
+    Object.assign(pluginState, { currentConfig: normalized });
   },
 
   async onHealth() {

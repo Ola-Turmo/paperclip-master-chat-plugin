@@ -5,11 +5,20 @@ import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payloa
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
 import type { HermesContinuationMode, HermesResponse, HermesToolTrace } from "./types.js";
 
+export interface AdapterInvocation {
+  command: string;
+  args: string[];
+  cwd?: string;
+}
+
 export interface AdapterServiceConfig {
   port: number;
   host: string;
   hermesCommand: string;
   hermesWorkingDirectory?: string;
+  defaultProfileId?: string;
+  defaultProvider?: string;
+  defaultModel?: string;
   authToken: string;
   authHeaderName: string;
   timeoutMs: number;
@@ -28,6 +37,9 @@ export function loadAdapterServiceConfig(): AdapterServiceConfig {
     host: process.env.MASTER_CHAT_ADAPTER_HOST || "127.0.0.1",
     hermesCommand: process.env.MASTER_CHAT_HERMES_COMMAND || "hermes",
     hermesWorkingDirectory: process.env.MASTER_CHAT_HERMES_CWD || "",
+    defaultProfileId: process.env.MASTER_CHAT_ADAPTER_DEFAULT_PROFILE || "",
+    defaultProvider: process.env.MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER || "",
+    defaultModel: process.env.MASTER_CHAT_ADAPTER_DEFAULT_MODEL || "",
     authToken: process.env.MASTER_CHAT_ADAPTER_TOKEN || "",
     authHeaderName: (process.env.MASTER_CHAT_ADAPTER_HEADER || "authorization").toLowerCase(),
     timeoutMs: envNumber("MASTER_CHAT_ADAPTER_TIMEOUT_MS", 45_000),
@@ -119,7 +131,11 @@ function buildSyntheticToolTraces(payload: HermesGatewayPayload): HermesToolTrac
   return traces;
 }
 
-async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewayPayload): Promise<HermesResponse> {
+export async function buildAdapterInvocation(config: AdapterServiceConfig, payload: HermesGatewayPayload): Promise<{
+  invocation: AdapterInvocation;
+  effectivePayload: HermesGatewayPayload;
+  warnings: string[];
+}> {
   let sanitizedWarnings: string[] = [];
   let sanitizedSkillPolicy = payload.skillPolicy;
 
@@ -146,16 +162,20 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
   const prompt = buildAdapterPrompt(effectivePayload, sanitizedWarnings);
   const args = [
     "-p",
-    effectivePayload.session.profileId,
+    effectivePayload.session.profileId || config.defaultProfileId || "default",
     "chat",
     "-Q",
     "--source",
     "tool",
-    "--provider",
-    effectivePayload.session.provider,
-    "-m",
-    effectivePayload.session.model,
   ];
+
+  if (effectivePayload.session.provider && effectivePayload.session.provider !== config.defaultProvider && effectivePayload.session.provider !== "auto") {
+    args.push("--provider", effectivePayload.session.provider);
+  }
+
+  if (effectivePayload.session.model && effectivePayload.session.model !== config.defaultModel) {
+    args.push("-m", effectivePayload.session.model);
+  }
 
   if (effectivePayload.session.sessionId) {
     args.push("--resume", effectivePayload.session.sessionId);
@@ -163,19 +183,29 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
     args.push("--pass-session-id");
   }
 
-  if (effectivePayload.skillPolicy.toolsets.length > 0) {
-    args.push("-t", effectivePayload.skillPolicy.toolsets.join(","));
-  }
-
-  if (effectivePayload.skillPolicy.enabled.length > 0) {
-    args.push("-s", effectivePayload.skillPolicy.enabled.join(","));
-  }
-
+  // Keep Hermes capability preferences in the prompt only. The local adapter is
+  // meant to behave like the verified CLI path on this VPS, which avoids
+  // forwarding -s/-t flags directly because host catalogs and tool-driven model
+  // behavior vary across Hermes installs.
   args.push("-q", prompt);
 
-  const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(config.hermesCommand, args, {
+  return {
+    invocation: {
+      command: config.hermesCommand,
+      args,
       cwd: config.hermesWorkingDirectory || undefined,
+    },
+    effectivePayload,
+    warnings: sanitizedWarnings,
+  };
+}
+
+async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewayPayload): Promise<HermesResponse> {
+  const { invocation, effectivePayload } = await buildAdapterInvocation(config, payload);
+
+  const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });

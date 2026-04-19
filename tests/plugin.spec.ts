@@ -109,4 +109,31 @@ describe("master chat plugin", () => {
       selectedAgentIds: ["agent_missing"],
     })).rejects.toThrow(/unknown agent ids/i);
   });
+
+  it("applies config changes without requiring a worker restart", async () => {
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
+    seedHarness(harness);
+
+    await plugin.definition.setup(harness.ctx);
+
+    harness.setConfig({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://adapter.invalid",
+      hermesAuthToken: "",
+    });
+    await plugin.definition.onConfigChanged?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://adapter.invalid",
+      hermesAuthToken: "",
+    });
+
+    const config = await harness.getData<{ gatewayMode: string }>("plugin-config", {});
+    expect(config.gatewayMode).toBe("http");
+
+    await expect(harness.performAction("send-message", {
+      companyId: "comp_1",
+      requestId: "req_after_config_change",
+      text: "This should use the updated HTTP config.",
+    })).rejects.toThrow(/hermesAuthToken/i);
+  });
 });
