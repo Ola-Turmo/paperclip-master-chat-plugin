@@ -150,6 +150,7 @@ async function main() {
         MASTER_CHAT_REMOTE_ADAPTER_URL: `https://127.0.0.1:${httpsPort}`,
         MASTER_CHAT_REMOTE_ADAPTER_TOKEN: authToken,
         MASTER_CHAT_REMOTE_ALLOW_INSECURE_TLS: 'true',
+        MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS: 'true',
         MASTER_CHAT_REMOTE_PROFILE: 'default',
         MASTER_CHAT_REMOTE_PROVIDER: 'auto',
         MASTER_CHAT_REMOTE_MODEL: 'MiniMax-M2.7',

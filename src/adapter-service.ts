@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
 import { buildImageAnalysisFromPath, buildMetadataFallbackAnalysis, cleanupTempDir, dataUrlToTempFile } from "./hermes/image-analysis.js";
+import { inferContinuationMode } from "./continuity.js";
 import type { HermesCapabilityInventory } from "./hermes/capabilities.js";
 import type { HermesContinuationMode, HermesImageAnalysisResult, HermesResponse, HermesToolTrace } from "./types.js";
 import { armProcessTimeout } from "./process.js";
@@ -171,7 +172,10 @@ export function resolveAdapterSessionState(
   const sessionId = parsedSessionId ?? payload.session.sessionId ?? `adapter-${payload.metadata.threadId}`;
   return {
     sessionId,
-    continuationMode: payload.session.sessionId || parsedSessionId ? "durable" : "stateless",
+    continuationMode: inferContinuationMode({
+      existingSessionId: payload.session.sessionId || parsedSessionId,
+      continuity: payload.continuity,
+    }),
   };
 }
 

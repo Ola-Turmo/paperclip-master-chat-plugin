@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatMessagePart, HermesRequest, HermesSessionConfig } from "./types.js";
+import type { ChatMessage, ChatMessagePart, HermesContinuationMode, HermesRequest, HermesSessionConfig } from "./types.js";
 
 function summarizeParts(parts: ChatMessagePart[]): string {
   const text = parts
@@ -86,4 +86,23 @@ export function buildContinuitySnapshot(input: {
     olderMessageCount: 0,
     totalMessageCount,
   };
+}
+
+export function inferContinuationMode(input: {
+  existingSessionId?: string;
+  continuity: HermesRequest["continuity"];
+}): HermesContinuationMode {
+  if (input.existingSessionId) {
+    return "durable";
+  }
+
+  if (
+    input.continuity.strategy !== "recent-history-only"
+    || input.continuity.olderMessageCount > 0
+    || input.continuity.totalMessageCount > 1
+  ) {
+    return "synthetic";
+  }
+
+  return "stateless";
 }

@@ -16,6 +16,7 @@ import type {
 import { buildHermesCliInvocation, buildHermesCliPrompt } from "./cli.js";
 import { analyzeImageViaCli } from "./image-analysis.js";
 import { buildHermesGatewayPayload } from "./payload.js";
+import { inferContinuationMode } from "../continuity.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./capabilities.js";
 import { armProcessTimeout } from "../process.js";
 
@@ -249,7 +250,10 @@ export function resolveCliSessionState(
   const sessionId = parsedSessionId ?? request.session.sessionId ?? `cli-${request.metadata.threadId}`;
   return {
     sessionId,
-    continuationMode: request.session.sessionId || parsedSessionId ? "durable" : "stateless",
+    continuationMode: inferContinuationMode({
+      existingSessionId: request.session.sessionId || parsedSessionId,
+      continuity: request.continuity,
+    }),
   };
 }
 
@@ -324,7 +328,10 @@ export class MockHermesGateway implements HermesGateway {
       model: request.session.model,
       sessionId: request.session.sessionId ?? `mock-${request.metadata.threadId}`,
       gatewayMode: "mock",
-      continuationMode: request.session.sessionId ? "durable" : "stateless",
+      continuationMode: inferContinuationMode({
+        existingSessionId: request.session.sessionId,
+        continuity: request.continuity,
+      }),
     };
   }
 
@@ -401,7 +408,10 @@ export class HttpHermesGateway implements HermesGateway {
         model: typeof data.model === "string" ? data.model : request.session.model,
         sessionId,
         gatewayMode: "http",
-        continuationMode: (data.continuationMode as HermesContinuationMode | undefined) ?? ((request.session.sessionId || typeof data.sessionId === "string") ? "durable" : "stateless"),
+        continuationMode: (data.continuationMode as HermesContinuationMode | undefined) ?? inferContinuationMode({
+          existingSessionId: request.session.sessionId || (typeof data.sessionId === "string" ? data.sessionId : undefined),
+          continuity: request.continuity,
+        }),
       };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {

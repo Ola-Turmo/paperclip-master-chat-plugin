@@ -3,6 +3,7 @@ import {
   buildImageAnalysisFallbackText,
   buildMetadataFallbackAnalysis,
   buildImageAnalysisPrompt,
+  looksLikeVisionFailure,
   parseImageAnalysisResponse,
 } from "../src/hermes/image-analysis.js";
 
@@ -41,6 +42,14 @@ describe("image analysis helpers", () => {
     expect(fallback).toContain("Vision summary: Handwritten note on a whiteboard");
     expect(fallback).toContain("Extracted text:\nREADY FOR QA");
     expect(fallback).toContain("Blue underlined heading");
+  });
+
+
+  it("detects provider-side vision failures so OCR fallback can run", () => {
+    expect(looksLikeVisionFailure("Vision analysis failed — OpenRouter credits are low (402 error)."))
+      .toBe(true);
+    expect(looksLikeVisionFailure('{"summary":"Green deploy dashboard","extractedText":"READY","notableDetails":[]}'))
+      .toBe(false);
   });
 
   it("builds a metadata-only fallback analysis when Hermes vision is unavailable", () => {

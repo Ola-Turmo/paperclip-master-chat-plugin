@@ -59,6 +59,24 @@ function extractJsonObject(raw: string): string | undefined {
   return raw.slice(first, last + 1);
 }
 
+const VISION_FAILURE_PATTERNS = [
+  /vision analysis failed/iu,
+  /vision api credits/iu,
+  /credits are low/iu,
+  /402 error/iu,
+  /could(?:n't| not) be processed/iu,
+  /unable to visually analy[sz]e/iu,
+  /model.*does not support images/iu,
+  /insufficient credits/iu,
+  /no image understanding/iu,
+];
+
+export function looksLikeVisionFailure(raw: string): boolean {
+  const normalized = raw.trim();
+  if (!normalized) return true;
+  return VISION_FAILURE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 export function buildImageAnalysisPrompt(maxChars: number): string {
   return [
     "You are analyzing a single image for Paperclip Master Chat.",
@@ -230,46 +248,199 @@ async function runHermesImageCommand(
   });
 }
 
+async function runTesseractOcr(
+  filePath: string,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("tesseract", [filePath, "stdout", "--psm", "6"], {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    const clearTimeouts = armProcessTimeout(child, Math.max(5_000, timeoutMs), () => {
+      reject(timeoutError(`Local OCR fallback timed out after ${Math.max(5_000, timeoutMs)}ms`));
+    });
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("error", (error) => {
+      clearTimeouts();
+      reject(unavailableError("Failed to launch local OCR fallback 'tesseract'", error));
+    });
+
+    child.on("close", (code) => {
+      clearTimeouts();
+      if (code === 0 || (code === 1 && stdout.trim())) {
+        resolve(truncateText(stdout.replace(/\r/g, "").trim(), 8_000));
+        return;
+      }
+      reject(upstreamError(`Local OCR fallback exited with code ${code}: ${stderr || stdout}`));
+    });
+  });
+}
+
+async function buildLocalOcrFallback(
+  filePath: string,
+  input: {
+    name: string;
+    mimeType: string;
+    altText?: string;
+    maxChars: number;
+    timeoutMs: number;
+    reason?: unknown;
+  },
+): Promise<HermesImageAnalysisResult | undefined> {
+  const extractedText = await runTesseractOcr(filePath, input.timeoutMs).catch(() => undefined);
+  const normalizedText = truncateText(extractedText, input.maxChars);
+  const fallbackReason = normalizeFallbackReason(input.reason, Math.min(400, input.maxChars));
+  const altText = truncateText(input.altText, Math.min(1_200, input.maxChars));
+
+  if (!normalizedText && !altText) {
+    return undefined;
+  }
+
+  const summaryBase = normalizedText
+    ? `Local OCR fallback extracted text from ${input.name} after Hermes vision analysis was unavailable.`
+    : `Local OCR fallback could not extract text from ${input.name}, but metadata was retained for later re-analysis.`;
+
+  return {
+    status: "complete",
+    summary: truncateText(summaryBase, Math.min(1_200, input.maxChars)),
+    extractedText: normalizedText ?? altText,
+    notableDetails: [
+      `mime=${input.mimeType}`,
+      normalizedText ? "analysis=tesseract-fallback" : "analysis=metadata-fallback",
+      fallbackReason ? `reason=${fallbackReason}` : undefined,
+    ].filter((entry): entry is string => Boolean(entry)),
+    errorMessage: fallbackReason,
+    provider: normalizedText ? "tesseract-fallback" : "metadata-fallback",
+    model: normalizedText ? "tesseract" : "metadata-fallback",
+  };
+}
+
+async function analyzeImageFileWithFallback(
+  filePath: string,
+  input: {
+    hermesCommand: string;
+    hermesWorkingDirectory?: string;
+    profileId: string;
+    timeoutMs: number;
+    maxChars: number;
+    name: string;
+    mimeType: string;
+    altText?: string;
+  },
+): Promise<HermesImageAnalysisResult> {
+  const args = [
+    "-p",
+    input.profileId || "default",
+    "chat",
+    "-Q",
+    "--source",
+    "tool",
+    "--image",
+    filePath,
+    "-q",
+    buildImageAnalysisPrompt(input.maxChars),
+  ];
+
+  try {
+    const output = await runHermesImageCommand(
+      input.hermesCommand,
+      args,
+      input.hermesWorkingDirectory || undefined,
+      input.timeoutMs,
+    );
+
+    if (!looksLikeVisionFailure(output)) {
+      return parseImageAnalysisResponse(output, input.maxChars);
+    }
+
+    const ocrFallback = await buildLocalOcrFallback(filePath, {
+      name: input.name,
+      mimeType: input.mimeType,
+      altText: input.altText,
+      maxChars: input.maxChars,
+      timeoutMs: Math.min(30_000, input.timeoutMs),
+      reason: output,
+    });
+    if (ocrFallback) return ocrFallback;
+
+    return buildMetadataFallbackAnalysis({
+      name: input.name,
+      mimeType: input.mimeType,
+      altText: input.altText,
+      maxChars: input.maxChars,
+      error: output,
+    });
+  } catch (error) {
+    const ocrFallback = await buildLocalOcrFallback(filePath, {
+      name: input.name,
+      mimeType: input.mimeType,
+      altText: input.altText,
+      maxChars: input.maxChars,
+      timeoutMs: Math.min(30_000, input.timeoutMs),
+      reason: error,
+    });
+    if (ocrFallback) return ocrFallback;
+
+    return buildMetadataFallbackAnalysis({
+      name: input.name,
+      mimeType: input.mimeType,
+      altText: input.altText,
+      maxChars: input.maxChars,
+      error,
+    });
+  }
+}
+
 export async function analyzeImageViaCli(
   config: MasterChatPluginConfig,
   request: HermesImageAnalysisRequest,
 ): Promise<HermesImageAnalysisResult> {
-  try {
-    if (!config.hermesCommand.trim()) {
-      throw configError("Hermes CLI image analysis requires hermesCommand");
-    }
-
-    return await withTempImageFile(request, async (filePath) => {
-      const args = [
-        "-p",
-        request.session.profileId || config.defaultProfileId || "default",
-        "chat",
-        "-Q",
-        "--source",
-        "tool",
-        "--image",
-        filePath,
-        "-q",
-        buildImageAnalysisPrompt(config.imageAnalysisMaxChars),
-      ];
-
-      const output = await runHermesImageCommand(
-        config.hermesCommand,
-        args,
-        config.hermesWorkingDirectory || undefined,
-        Math.max(10_000, config.gatewayRequestTimeoutMs),
-      );
-
-      return parseImageAnalysisResponse(output, config.imageAnalysisMaxChars);
-    });
-  } catch (error) {
+  if (!config.hermesCommand.trim()) {
     return buildMetadataFallbackAnalysis({
       name: request.attachment.name,
       mimeType: request.attachment.mimeType,
       altText: request.attachment.altText,
       maxChars: config.imageAnalysisMaxChars,
-      error,
+      error: configError("Hermes CLI image analysis requires hermesCommand"),
     });
+  }
+
+  return await withTempImageFile(request, async (filePath) => await analyzeImageFileWithFallback(filePath, {
+    hermesCommand: config.hermesCommand,
+    hermesWorkingDirectory: config.hermesWorkingDirectory || undefined,
+    profileId: request.session.profileId || config.defaultProfileId || "default",
+    timeoutMs: Math.max(10_000, config.gatewayRequestTimeoutMs),
+    maxChars: config.imageAnalysisMaxChars,
+    name: request.attachment.name,
+    mimeType: request.attachment.mimeType,
+    altText: request.attachment.altText,
+  }));
+}
+
+function inferMimeTypeFromPath(filePath: string): string {
+  switch (extname(filePath).toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".png":
+    default:
+      return "image/png";
   }
 }
 
@@ -283,26 +454,15 @@ export async function buildImageAnalysisFromPath(
     maxChars: number;
   },
 ): Promise<HermesImageAnalysisResult> {
-  const args = [
-    "-p",
-    config.profileId || "default",
-    "chat",
-    "-Q",
-    "--source",
-    "tool",
-    "--image",
-    filePath,
-    "-q",
-    buildImageAnalysisPrompt(config.maxChars),
-  ];
-
-  const output = await runHermesImageCommand(
-    config.hermesCommand,
-    args,
-    config.hermesWorkingDirectory || undefined,
-    config.timeoutMs,
-  );
-  return parseImageAnalysisResponse(output, config.maxChars);
+  return await analyzeImageFileWithFallback(filePath, {
+    hermesCommand: config.hermesCommand,
+    hermesWorkingDirectory: config.hermesWorkingDirectory || undefined,
+    profileId: config.profileId,
+    timeoutMs: config.timeoutMs,
+    maxChars: config.maxChars,
+    name: basename(filePath),
+    mimeType: inferMimeTypeFromPath(filePath),
+  });
 }
 
 export async function dataUrlToTempFile(

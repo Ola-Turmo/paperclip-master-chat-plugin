@@ -129,8 +129,8 @@ The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes hos
 - Tune `maxMessageChars` alongside attachment limits if you need tighter anti-abuse budgets.
 - Tune `imageAnalysisMaxChars` downward if OCR output or image descriptions should be aggressively capped before persistence.
 - Run `pnpm vps:check` before local install so you can confirm the plugin can reuse the existing Hermes and Paperclip paths on the host.
-- Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, sends a real image through the plugin, and verifies both CLI and HTTP paths end to end.
-- Run `pnpm remote:smoke:local` when you want a local HTTPS rehearsal of the signed remote-adapter contract without needing a second host; it always verifies the main continuation endpoint and can optionally probe image analysis with `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true`.
+- Run `pnpm vps:smoke` when you want one command that rebuilds the repo, refreshes the local Paperclip install, records the host Hermes CLI's raw image response, verifies the signed adapter `/images/analyze` path with Hermes-first plus local OCR fallback, and then checks both CLI and HTTP Paperclip turns end to end.
+- Run `pnpm remote:smoke:local` when you want a local HTTPS rehearsal of the signed remote-adapter contract without needing a second host; it now verifies both the main continuation endpoint and the signed image-analysis endpoint by default.
 - Run `pnpm remote:smoke` with `MASTER_CHAT_REMOTE_ADAPTER_URL` and `MASTER_CHAT_REMOTE_ADAPTER_TOKEN` when you want to verify a real remote HTTPS adapter deployment. Add `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` or `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true` when the target runtime should also satisfy the signed image-analysis path.
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
 - Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.

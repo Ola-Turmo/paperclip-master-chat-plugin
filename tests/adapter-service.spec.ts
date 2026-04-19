@@ -209,6 +209,16 @@ describe("adapter service helpers", () => {
     });
   });
 
+  it("treats summary-backed adapter turns as synthetic when Hermes returns no real session id", () => {
+    const payload = samplePayload();
+    payload.session.sessionId = undefined;
+
+    expect(resolveAdapterSessionState(payload, "READY")).toEqual({
+      sessionId: "adapter-thr_1",
+      continuationMode: "synthetic",
+    });
+  });
+
   it("rejects mismatched bearer headers", () => {
     expect(isAuthorized({ authorization: "Bearer wrong-token" }, {
       port: 8788,

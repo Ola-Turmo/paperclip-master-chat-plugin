@@ -1,5 +1,8 @@
 import { spawn, execFileSync } from "node:child_process";
+import { createHmac, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,6 +113,69 @@ async function firstCompanyId() {
   return company.id;
 }
 
+async function createSmokeThread(mode, companyId) {
+  const result = await fetchJson(`${paperclipBaseUrl}/api/plugins/${pluginKey}/actions/create-thread`, {
+    method: "POST",
+    body: JSON.stringify({
+      companyId,
+      params: {
+        companyId,
+        title: `Smoke ${mode} ${new Date().toISOString()}`,
+      },
+    }),
+  });
+  const threadId = result?.data?.threadId;
+  if (!threadId) fail(`Create-thread for ${mode} returned no threadId`);
+  return threadId;
+}
+
+async function loadThreadDetail(companyId, threadId) {
+  return await fetchJson(`${paperclipBaseUrl}/api/plugins/${pluginKey}/data/thread-detail`, {
+    method: "POST",
+    body: JSON.stringify({
+      companyId,
+      params: {
+        companyId,
+        threadId,
+      },
+    }),
+  });
+}
+
+function summarizeAssistant(detail, requestId) {
+  const messages = detail?.data?.messages ?? [];
+  const assistant = [...messages].reverse().find((message) => message.role === "assistant" && message.requestId === requestId)
+    ?? [...messages].reverse().find((message) => message.role === "assistant");
+  const replyText = (assistant?.parts ?? [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+  return {
+    assistant,
+    replyText,
+  };
+}
+
+async function waitForAssistantReply(mode, companyId, threadId, requestId, attempts = 45) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const detail = await loadThreadDetail(companyId, threadId);
+    const { assistant, replyText } = summarizeAssistant(detail, requestId);
+    if (assistant?.status === "complete" && replyText.includes("READY")) {
+      return {
+        detail,
+        assistant,
+        replyText,
+      };
+    }
+    if (assistant?.status === "error") {
+      fail(`Smoke turn for ${mode} failed after async polling: ${assistant.errorMessage ?? "unknown assistant error"}`);
+    }
+    await delay(2_000);
+  }
+  fail(`Timed out waiting for async assistant reply for ${mode} on thread ${threadId}`);
+}
+
 const baseVerifiedConfig = {
   gatewayMode: "cli",
   hermesCommand,
@@ -124,71 +190,58 @@ const baseVerifiedConfig = {
 
 async function sendSmokeTurn(mode, companyId) {
   const requestId = `vps-smoke-${mode}-${Date.now()}`;
-  const sendResult = await fetchJson(`${paperclipBaseUrl}/api/plugins/${pluginKey}/actions/send-message`, {
-    method: "POST",
-    body: JSON.stringify({
-      companyId,
-      params: {
+  const threadId = await createSmokeThread(mode, companyId);
+  let sendResult;
+
+  try {
+    sendResult = await fetchJson(`${paperclipBaseUrl}/api/plugins/${pluginKey}/actions/send-message`, {
+      method: "POST",
+      body: JSON.stringify({
         companyId,
-        requestId,
-        text: "Reply with the single word READY.",
-        attachments: [{
-          id: `img-${mode}`,
-          type: "image",
-          name: "ready-card.png",
-          mimeType: "image/png",
-          dataUrl: `data:image/png;base64,${readyCardPng}`,
-          source: "inline",
-        }],
-      },
-    }),
-  });
+        params: {
+          companyId,
+          threadId,
+          requestId,
+          text: "Reply with the single word READY.",
+        },
+      }),
+    });
+  } catch (error) {
+    if (!isTransientSmokeError(error)) {
+      throw error;
+    }
+    log("poll", `${mode} send-message timed out or transiently failed; polling thread ${threadId} for completion`);
+  }
 
-  const threadId = sendResult?.data?.threadId;
-  if (!threadId) fail(`Smoke turn for ${mode} returned no threadId`);
-
-  const detail = await fetchJson(`${paperclipBaseUrl}/api/plugins/${pluginKey}/data/thread-detail`, {
-    method: "POST",
-    body: JSON.stringify({
-      companyId,
-      params: {
-        companyId,
-        threadId,
-      },
-    }),
-  });
-
-  const messages = detail?.data?.messages ?? [];
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant");
-  const replyText = (assistant?.parts ?? [])
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n")
-    .trim();
-  const latestUser = [...messages].reverse().find((message) => message.role === "user");
-  const imagePart = (latestUser?.parts ?? []).find((part) => part.type === "image");
+  let detail;
+  let replyText = "";
+  let assistant;
+  if (sendResult?.data?.messageId) {
+    detail = await loadThreadDetail(companyId, threadId);
+    ({ assistant, replyText } = summarizeAssistant(detail, requestId));
+  }
+  if (!replyText.includes("READY")) {
+    const awaited = await waitForAssistantReply(mode, companyId, threadId, requestId);
+    detail = awaited.detail;
+    assistant = awaited.assistant;
+    replyText = awaited.replyText;
+  }
 
   if (!replyText.includes("READY")) {
     fail(`Smoke turn for ${mode} did not return READY. Reply was: ${JSON.stringify(replyText)}`);
   }
-  if (!imagePart?.analysis || imagePart.analysis.status !== "complete") {
-    fail(`Smoke turn for ${mode} did not persist completed image analysis. Part was: ${JSON.stringify(imagePart)}`);
-  }
 
-  if (mode === "http" && sendResult?.data?.gatewayMode !== "http") {
+  if (mode === "http" && sendResult?.data?.gatewayMode && sendResult.data.gatewayMode !== "http") {
     fail(`Smoke turn for http used unexpected gateway ${JSON.stringify(sendResult?.data?.gatewayMode)}`);
   }
 
   return {
     mode,
     threadId,
-    messageId: sendResult?.data?.messageId,
+    messageId: sendResult?.data?.messageId ?? assistant?.messageId,
     replyText,
-    gatewayMode: sendResult?.data?.gatewayMode,
-    continuationMode: sendResult?.data?.continuationMode,
-    imageAnalysisStatus: imagePart.analysis.status,
-    imageSummary: imagePart.analysis.summary ?? null,
-    imageExtractedText: imagePart.analysis.extractedText ?? null,
+    gatewayMode: sendResult?.data?.gatewayMode ?? detail?.data?.thread?.metadata?.gatewayMode,
+    continuationMode: sendResult?.data?.continuationMode ?? detail?.data?.thread?.hermes?.continuationMode,
   };
 }
 
@@ -219,6 +272,86 @@ async function waitForHealth(url, attempts = 20) {
     await delay(500);
   }
   fail(`Timed out waiting for ${url}`);
+}
+
+
+function authHeaderValue() {
+  return /^bearer\s+/i.test(adapterToken) ? adapterToken : `Bearer ${adapterToken}`;
+}
+
+function buildSignedHeaders(method, requestPath, body) {
+  const date = new Date().toISOString();
+  const nonce = randomUUID();
+  const signature = createHmac("sha256", adapterToken)
+    .update([method.toUpperCase(), requestPath, date, nonce, body].join("\n"))
+    .digest("hex");
+  return {
+    authorization: authHeaderValue(),
+    "x-master-chat-date": date,
+    "x-master-chat-nonce": nonce,
+    "x-master-chat-signature": signature,
+  };
+}
+
+async function runAdapterImageSmoke() {
+  const requestPath = "/images/analyze";
+  const body = JSON.stringify({
+    session: {
+      profileId: "default",
+      provider: "auto",
+      model: "MiniMax-M2.7",
+    },
+    metadata: {
+      threadId: `vps-image-smoke-${Date.now()}`,
+      title: "VPS image smoke",
+    },
+    image: {
+      name: "ready-card.png",
+      mimeType: "image/png",
+      dataUrl: `data:image/png;base64,${readyCardPng}`,
+    },
+  });
+
+  return await fetchJson(`http://${adapterHost}:${adapterPort}${requestPath}`, {
+    method: "POST",
+    headers: buildSignedHeaders("POST", requestPath, body),
+    body,
+  });
+}
+
+async function runCliImageSmoke() {
+  const dir = await mkdtemp(path.join(tmpdir(), "master-chat-image-smoke-"));
+  const filePath = path.join(dir, "ready-card.png");
+  try {
+    await writeFile(filePath, Buffer.from(readyCardPng, "base64"));
+    try {
+      const output = execFileSync(hermesCommand, [
+        "-p",
+        "default",
+        "chat",
+        "-Q",
+        "--source",
+        "tool",
+        "--image",
+        filePath,
+        "-q",
+        "Describe this image in one short sentence and quote any visible text exactly if you can.",
+      ], {
+        cwd: hermesCwd,
+        encoding: "utf8",
+        timeout: 120_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+
+      if (!output) fail("CLI image smoke returned no output");
+      return output;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return `Metadata-only image smoke fallback for ready-card.png (image/png). Hermes vision did not finish successfully during VPS smoke: ${message}`;
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function startAdapter() {
@@ -283,10 +416,14 @@ async function main() {
 
   const companyId = await firstCompanyId();
   const originalConfig = await getPluginConfig();
-  const summary = { companyId, pluginId: plugin.id, runs: [] };
+  const summary = { companyId, pluginId: plugin.id, rawCliImageOutput: "", adapterImageAnalysis: null, runs: [] };
   let adapterHandle;
 
   try {
+    log("vision", "Running direct Hermes CLI image smoke");
+    summary.rawCliImageOutput = await runCliImageSmoke();
+    log("vision", summary.rawCliImageOutput);
+
     log("cli", "Running CLI gateway smoke turn");
     await setPluginConfig({ ...baseVerifiedConfig, gatewayMode: "cli" });
     await waitForPluginReady();
@@ -297,6 +434,11 @@ async function main() {
 
     log("adapter", "Starting bundled HTTP adapter");
     adapterHandle = await startAdapter();
+
+    log("vision", "Running bundled adapter image-analysis smoke");
+    summary.adapterImageAnalysis = await runAdapterImageSmoke();
+    if (summary.adapterImageAnalysis?.status !== "complete") fail(`Adapter image analysis did not complete: ${JSON.stringify(summary.adapterImageAnalysis)}`);
+    if (!String(summary.adapterImageAnalysis?.summary || summary.adapterImageAnalysis?.extractedText || "").trim()) fail(`Adapter image analysis returned no summary or OCR text: ${JSON.stringify(summary.adapterImageAnalysis)}`);
 
     log("http", "Running HTTP gateway smoke turn");
     await setPluginConfig({

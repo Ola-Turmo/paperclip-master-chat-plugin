@@ -44,7 +44,7 @@ This plugin follows the current Paperclip alpha plugin model:
 9. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
 10. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
 11. **Keep the adapter clock sane** — HMAC freshness checks use `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default 5 minutes), so host time drift can cause legitimate requests to fail.
-12. **Exercise the signed adapter transport before rollout** — use `pnpm remote:smoke` or `pnpm remote:smoke:local` so `/sessions/continue` is validated under the same auth/signature scheme, and enable `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` when the target Hermes runtime should also be expected to pass `/images/analyze`.
+12. **Exercise the signed adapter transport before rollout** — use `pnpm remote:smoke` or `pnpm remote:smoke:local` so both `/sessions/continue` and `/images/analyze` are validated under the same auth/signature scheme. The bundled adapter now tries Hermes vision first, falls back to local OCR via `tesseract` if the provider rejects images, and only then degrades to metadata, which keeps the transport test green without falsely claiming durable OCR fidelity.
 
 ## Current runtime caveats
 
@@ -69,6 +69,10 @@ This is a feature for a trusted VPS, but it is not the same isolation level as a
 ### State storage is simple by design
 
 Using plugin state for thread persistence is appropriate for the current alpha plugin surface and tests, but higher-scale installs may prefer a richer backing store when the host runtime exposes it. The current filesystem attachment backend is intentionally local-host scoped, so shared or ephemeral hosts still need durable storage planning.
+
+### Synthetic continuity is explicit
+
+When Hermes does not return a real session identifier, the plugin no longer treats every follow-up turn as purely stateless. Instead it records and forwards deterministic synthetic continuity summaries, and marks those turns as `synthetic` continuity until Hermes eventually supplies a real durable session ID.
 
 ## Honest scope of this repository
 

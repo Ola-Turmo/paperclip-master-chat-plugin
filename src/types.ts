@@ -1,7 +1,7 @@
 export type ChatMode = "single_agent" | "multi_agent" | "company_wide";
 export type HermesGatewayMode = "auto" | "mock" | "http" | "cli";
 export type HermesGatewaySelection = "mock" | "http" | "cli";
-export type HermesContinuationMode = "durable" | "stateless";
+export type HermesContinuationMode = "durable" | "synthetic" | "stateless";
 export type ImageAnalysisStatus = "complete" | "error" | "skipped";
 export type MasterChatErrorCode =
   | "validation"

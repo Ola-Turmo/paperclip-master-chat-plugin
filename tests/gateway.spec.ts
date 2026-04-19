@@ -177,6 +177,48 @@ describe("createHermesGateway", () => {
     }
   });
 
+  it("marks HTTP continuation as synthetic when the adapter has no real session id but receives summarized prior context", async () => {
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
+    const originalFetch = globalThis.fetch;
+    const ctxFetch = harness.ctx.http.fetch;
+
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      assistantText: "READY",
+      toolTraces: [],
+      provider: "auto",
+      model: "MiniMax-M2.7",
+      gatewayMode: "http",
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    harness.ctx.http.fetch = async () => {
+      throw new Error("ctx.http.fetch should not be used for loopback adapter URLs");
+    };
+
+    try {
+      const gateway = new HttpHermesGateway(harness.ctx, buildConfig({
+        gatewayMode: "http",
+        hermesBaseUrl: "http://127.0.0.1:8788",
+        hermesAuthToken: "secret-token",
+        gatewayRequestTimeoutMs: 2_000,
+      }));
+
+      const response = await gateway.sendMessage(sampleRequest({
+        continuity: {
+          strategy: "synthetic-summary",
+          olderMessageCount: 2,
+          totalMessageCount: 4,
+          summary: "- User: Earlier scope discussion",
+        },
+      }));
+      expect(response.continuationMode).toBe("synthetic");
+    } finally {
+      globalThis.fetch = originalFetch;
+      harness.ctx.http.fetch = ctxFetch;
+    }
+  });
+
   it("posts image-analysis requests to the adapter and normalizes the result", async () => {
     const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
     const originalFetch = globalThis.fetch;

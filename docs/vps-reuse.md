@@ -121,7 +121,9 @@ Or, for the bundled local adapter service:
 Only add `allowPrivateAdapterHosts: true` when the adapter lives on a trusted internal RFC1918 address that is not loopback.
 Keep `allowInsecureHttpAdapters: false` unless you are deliberately using a trusted non-loopback adapter over plain HTTP. Remote or cross-host adapters should stay on HTTPS by default.
 
-`pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, sends a real image attachment through the live plugin, verifies Hermes-backed image analysis completes, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and verifies a live HTTP turn through Paperclip too.
+`pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, records the host Hermes CLI's raw image response for the READY card fixture, starts the bundled adapter on a temporary loopback port, verifies signed `/images/analyze` with Hermes-first plus local OCR fallback, and then verifies live CLI and live HTTP turns through Paperclip too.
+
+For the external-adapter seam, run `pnpm remote:smoke:local` to rehearse the same signed HTTPS contract against an ephemeral local proxy, including the image-analysis endpoint. Use `pnpm remote:smoke` with a real `MASTER_CHAT_REMOTE_ADAPTER_URL` when you want the same signed verification against a separate remote host.
 
 ## Why this is useful
 

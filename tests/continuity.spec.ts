@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildContinuitySnapshot } from "../src/continuity.js";
+import { buildContinuitySnapshot, inferContinuationMode } from "../src/continuity.js";
 import type { ChatMessage, HermesSessionConfig } from "../src/types.js";
 
 function message(role: ChatMessage["role"], text: string, messageId: string): ChatMessage {
@@ -73,5 +73,26 @@ describe("buildContinuitySnapshot", () => {
     expect(continuity.totalMessageCount).toBe(4);
     expect(continuity.summary).toContain("Architecture review kickoff");
     expect(continuity.summary).toContain("Need concise executive summary");
+  });
+
+  it("marks summary-backed continuity as synthetic when Hermes provides no real session id", () => {
+    expect(inferContinuationMode({
+      continuity: {
+        strategy: "synthetic-summary",
+        olderMessageCount: 2,
+        totalMessageCount: 4,
+        summary: "- User: Earlier architecture review kickoff",
+      },
+    })).toBe("synthetic");
+  });
+
+  it("keeps first-turn continuity stateless when there is no prior context to reconstruct", () => {
+    expect(inferContinuationMode({
+      continuity: {
+        strategy: "recent-history-only",
+        olderMessageCount: 0,
+        totalMessageCount: 1,
+      },
+    })).toBe("stateless");
   });
 });

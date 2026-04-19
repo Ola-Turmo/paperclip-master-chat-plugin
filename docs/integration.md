@@ -30,10 +30,11 @@ This mode reuses the **existing Hermes agent installation on the host** instead 
 ### Session continuity semantics
 
 - Existing CLI-backed threads reuse `sessionId` with `--resume`.
-- New CLI-backed threads start `stateless`, but are upgraded to `durable` automatically once Hermes returns a real session ID.
+- New CLI-backed threads start `stateless`, upgrade to `synthetic` continuity as soon as the plugin has enough recent history or a deterministic summary to replay, and upgrade again to `durable` automatically once Hermes returns a real session ID.
 - HTTP-backed threads also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits `continuationMode`.
 - HTTP mode remains the preferred path for production-grade durable continuation.
 - When older thread history is truncated, the worker includes a deterministic synthetic continuity summary instead of claiming durable memory.
+- The bundled adapter's `/images/analyze` route now attempts Hermes vision first, falls back to local OCR via `tesseract` when the provider rejects image understanding, and only then degrades to metadata-backed output if neither path yields text, so remote HTTPS deployments can still validate multimodal transport without overstating OCR fidelity.
 
 ### 2. External HTTP adapter (`gatewayMode=http`)
 

@@ -85,9 +85,9 @@ On this VPS, the script detects whether:
 - `/root/work/paperclip` exists as a local Paperclip checkout
 - local Hermes ports such as `8787` or `8642` are listening
 
-`pnpm vps:smoke` goes further: it rebuilds the repo, refreshes the plugin inside the local Paperclip checkout, sends a real image attachment through the live Paperclip plugin, verifies Hermes-backed image analysis completes, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and then verifies a live HTTP turn through Paperclip as well.
+`pnpm vps:smoke` goes further: it rebuilds the repo, refreshes the plugin inside the local Paperclip checkout, captures the host Hermes CLI's raw image response, starts the bundled adapter on a temporary loopback port, verifies signed `POST /images/analyze` with Hermes-first plus local OCR fallback, and then verifies both live CLI and live HTTP Paperclip turns end to end.
 
-`pnpm remote:smoke:local` goes one step further for the external-adapter path: it starts the bundled adapter, places an ephemeral self-signed HTTPS reverse proxy in front of it, and exercises the signed remote adapter contract over HTTPS. By default it verifies `POST /sessions/continue` end to end and can optionally probe `POST /images/analyze` too by setting `MASTER_CHAT_REMOTE_ATTEMPT_IMAGE_ANALYSIS=true` (or require it with `MASTER_CHAT_REMOTE_REQUIRE_IMAGE_ANALYSIS=true`). Use `pnpm remote:smoke` when you want to point the same signed smoke client at a real remote adapter URL.
+`pnpm remote:smoke:local` goes one step further for the external-adapter path: it starts the bundled adapter, places an ephemeral self-signed HTTPS reverse proxy in front of it, and exercises the signed remote adapter contract over HTTPS. It now validates both `POST /sessions/continue` and `POST /images/analyze` by default, with image-analysis requests falling back to local OCR via `tesseract` when Hermes vision is unavailable and only then degrading to metadata if no OCR text can be extracted. Use `pnpm remote:smoke` when you want to point the same signed smoke client at a real remote adapter URL.
 
 ### 4) Build for Paperclip
 
@@ -205,7 +205,7 @@ When the bundled adapter is reusing the same host defaults as the Paperclip plug
 
 - **HTTP mode** is the preferred production path for durable Hermes continuation.
 - **CLI mode** resumes existing Hermes sessions with `--resume <sessionId>` when the thread already has a real session ID.
-- **New CLI conversations** start `stateless`, but they are upgraded to `durable` automatically once Hermes returns a real session ID.
+- **New CLI conversations** start `stateless`, upgrade to `synthetic` continuity once the plugin can replay deterministic prior context, and upgrade to `durable` automatically once Hermes returns a real session ID.
 - **HTTP conversations** also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits an explicit `continuationMode`.
 - **When history is truncated or Hermes remains stateless**, the worker includes a deterministic synthetic continuity summary instead of pretending durable memory exists.
 
