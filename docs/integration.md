@@ -172,7 +172,8 @@ The external adapter service should:
 6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
 7. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
 8. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
-8. Reject oversized JSON request bodies before parsing and enforce adapter auth in a side-channel-resistant way.
+9. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
+10. Enforce adapter auth in a side-channel-resistant way.
 
 ## Paperclip runtime considerations
 

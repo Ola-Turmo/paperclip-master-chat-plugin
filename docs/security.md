@@ -19,8 +19,7 @@ This plugin follows the current Paperclip alpha plugin model:
 - tool traces are redacted before persistence when `redactToolPayloads=true`
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
 - the bundled local adapter service requires the configured auth header/token before it will continue sessions
-- the bundled local adapter service compares auth tokens with `timingSafeEqual` and rejects oversized request bodies with `413`
-- the bundled local adapter service compares auth headers in constant time and rejects oversized JSON bodies before parsing them
+- the bundled local adapter service compares auth tokens with `timingSafeEqual`, requires timestamped HMAC signature headers, rejects stale/replayed nonces, and rejects oversized request bodies with `413`
 - unsupported Hermes capability preferences are filtered before local CLI or adapter requests so host-specific catalogs do not become runtime footguns
 - loopback adapter URLs are treated as trusted-host deployments and use direct Node `fetch` instead of Paperclip's SSRF-guarded `ctx.http.fetch`
 - non-loopback RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
@@ -38,6 +37,7 @@ This plugin follows the current Paperclip alpha plugin model:
 7. **Audit activity** — the worker already writes lightweight activity summaries and failure metrics; extend this in production.
 8. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
 9. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
+10. **Keep the adapter clock sane** — HMAC freshness checks use `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default 5 minutes), so host time drift can cause legitimate requests to fail.
 
 ## Current runtime caveats
 

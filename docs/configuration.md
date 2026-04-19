@@ -123,6 +123,7 @@ The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes hos
 - Watch for bootstrap/thread warnings: they now surface catalog truncation and trusted-host caveats directly in the UI.
 - Use `pnpm adapter:start` when you want a host-local HTTP boundary while still reusing the same Hermes CLI install on the VPS.
 - The bundled adapter honors `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES` (default `15000000`) so authenticated callers cannot stream arbitrarily large JSON payloads into the adapter process.
+- The bundled adapter also honors `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default `300000`) for signed request freshness checks.
 
 ## Validation behavior
 
@@ -135,6 +136,7 @@ The worker validates config updates before accepting them:
 - `maxTotalAttachmentBytes` must be at least `maxAttachmentBytesPerFile`
 - `maxMessageChars` must be at least `1`
 - explicit blank `hermesAuthHeaderName` and explicit `maxMessageChars <= 0` are rejected instead of being silently coerced to defaults
+- the bundled adapter expects timestamped HMAC signature headers on `/sessions/continue` and rejects stale or replayed nonces
 
 ## CLI compatibility note
 
