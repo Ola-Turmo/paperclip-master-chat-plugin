@@ -98,6 +98,7 @@ The plugin exposes instance config fields through the Paperclip manifest schema,
 - `hermesBaseUrl`: base URL for an external Hermes adapter service when `gatewayMode=http`
 - `hermesAuthToken` / `hermesAuthHeaderName`: service auth for the adapter boundary
 - `allowPrivateAdapterHosts`: opt-in for direct fetch to RFC1918/private adapter URLs beyond loopback
+- `allowInsecureHttpAdapters`: opt-in for non-HTTPS remote adapter URLs
 - `gatewayRequestTimeoutMs`
 - `defaultProfileId`
 - `defaultProvider`
@@ -140,7 +141,7 @@ POST {hermesBaseUrl}/sessions/continue
 
 HTTP mode now **fails closed** unless adapter auth is configured.
 
-Loopback adapter URLs such as `http://127.0.0.1:8788` use direct Node `fetch` automatically so same-VPS deployments can work even when Paperclip's guarded HTTP client blocks private ranges. Non-loopback RFC1918/private adapter hosts now require explicit `allowPrivateAdapterHosts=true`.
+Loopback adapter URLs such as `http://127.0.0.1:8788` use direct Node `fetch` automatically so same-VPS deployments can work even when Paperclip's guarded HTTP client blocks private ranges. Non-loopback RFC1918/private adapter hosts now require explicit `allowPrivateAdapterHosts=true`, and non-loopback `http://` adapter URLs require explicit `allowInsecureHttpAdapters=true`.
 
 The bundled adapter also enforces a maximum request body size (`MASTER_CHAT_ADAPTER_MAX_BODY_BYTES`, default `15000000`) and rejects oversized requests with `413`. Worker-to-adapter HTTP requests now include timestamped HMAC signature headers (`x-master-chat-date`, `x-master-chat-nonce`, `x-master-chat-signature`) so the bundled adapter can reject stale or replayed requests.
 
@@ -174,7 +175,8 @@ When the bundled adapter is reusing the same host defaults as the Paperclip plug
 
 - **HTTP mode** is the preferred production path for durable Hermes continuation.
 - **CLI mode** resumes existing Hermes sessions with `--resume <sessionId>` when the thread already has a real session ID.
-- **New CLI conversations** are treated as `stateless` until the integration can prove a durable Hermes session ID.
+- **New CLI conversations** start `stateless`, but they are upgraded to `durable` automatically once Hermes returns a real session ID.
+- **HTTP conversations** also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits an explicit `continuationMode`.
 
 ## Repository layout
 

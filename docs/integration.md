@@ -29,7 +29,8 @@ This mode reuses the **existing Hermes agent installation on the host** instead 
 ### Session continuity semantics
 
 - Existing CLI-backed threads reuse `sessionId` with `--resume`.
-- New CLI-backed threads are treated as `stateless` until a real Hermes session ID can be proven.
+- New CLI-backed threads start `stateless`, but are upgraded to `durable` automatically once Hermes returns a real session ID.
+- HTTP-backed threads also upgrade to `durable` automatically whenever the adapter returns a real `sessionId`, even if the adapter omits `continuationMode`.
 - HTTP mode remains the preferred path for production-grade durable continuation.
 
 ### 2. External HTTP adapter (`gatewayMode=http`)
@@ -171,9 +172,10 @@ The external adapter service should:
 5. Return normalized text + tool traces.
 6. Expose health checks because `gatewayMode=auto` now uses adapter health to decide fallback behavior.
 7. Support trusted-host deployments explicitly. This repo now uses direct Node `fetch` automatically for loopback adapter URLs on the same VPS, because Paperclip's guarded `ctx.http.fetch` correctly blocks private ranges. Non-loopback RFC1918/private adapter URLs require explicit `allowPrivateAdapterHosts=true`.
-8. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
-9. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
-10. Enforce adapter auth in a side-channel-resistant way.
+8. Require secure remote transport by default. Non-loopback adapter URLs must use `https` unless the operator explicitly sets `allowInsecureHttpAdapters=true`.
+9. Enforce a maximum request body size. The bundled adapter defaults to `MASTER_CHAT_ADAPTER_MAX_BODY_BYTES=15000000` and returns `413` when callers exceed it.
+10. Verify signed requests. The worker now sends `x-master-chat-date`, `x-master-chat-nonce`, and `x-master-chat-signature` headers; the bundled adapter rejects stale or replayed signatures using the shared adapter secret as the HMAC key.
+11. Enforce adapter auth in a side-channel-resistant way.
 
 ## Paperclip runtime considerations
 

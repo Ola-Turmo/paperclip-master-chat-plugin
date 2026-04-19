@@ -13,6 +13,7 @@ The plugin uses manifest-based instance configuration.
 | `hermesAuthToken` | string | `""` | Shared secret or bearer token for the Hermes HTTP adapter. Required for `gatewayMode=http`. |
 | `hermesAuthHeaderName` | string | `authorization` | Header name used to forward `hermesAuthToken`. |
 | `allowPrivateAdapterHosts` | boolean | `false` | Allows direct Node `fetch` to RFC1918/private adapter hosts beyond loopback. Leave disabled unless the adapter lives on a trusted internal network. |
+| `allowInsecureHttpAdapters` | boolean | `false` | Allows non-loopback `http://` adapter URLs. Leave disabled unless you are intentionally using a trusted internal adapter without HTTPS. |
 | `gatewayRequestTimeoutMs` | number | `45000` | Timeout budget for CLI and HTTP requests. |
 | `defaultProfileId` | string | `paperclip-master` | Default Hermes profile identifier. |
 | `defaultProvider` | string | `openrouter` | Default Hermes provider label. |
@@ -114,6 +115,7 @@ The `MASTER_CHAT_ADAPTER_DEFAULT_*` values let the adapter mirror the Hermes hos
 - Use `gatewayMode=auto` when the plugin and Hermes run on the same trusted VPS.
 - Use `gatewayMode=http` when you want a dedicated adapter boundary, stronger service auth, or richer structured traces.
 - Keep `allowPrivateAdapterHosts=false` unless you explicitly need a non-loopback RFC1918 adapter URL. Loopback URLs already work without this flag.
+- Keep `allowInsecureHttpAdapters=false` unless the adapter is on a trusted internal network and HTTPS is genuinely unavailable.
 - Keep `availablePluginTools` tightly allowlisted.
 - Prefer environment- or instance-specific routing in the adapter service rather than exposing provider secrets to the plugin UI.
 - If you expect large inline images, lower browser-side limits or migrate to asset-backed persistence first.
@@ -131,6 +133,7 @@ The worker validates config updates before accepting them:
 
 - `gatewayMode=http` requires both `hermesBaseUrl` and `hermesAuthToken`
 - `hermesBaseUrl` must be an absolute `http` or `https` URL
+- non-loopback adapter URLs must use `https` unless `allowInsecureHttpAdapters=true`
 - loopback adapter URLs are always allowed for same-host deployments
 - RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
 - `maxTotalAttachmentBytes` must be at least `maxAttachmentBytesPerFile`
@@ -140,4 +143,4 @@ The worker validates config updates before accepting them:
 
 ## CLI compatibility note
 
-When `gatewayMode` is `cli` or `auto` and the local Hermes CLI is selected, the plugin probes the host Hermes install (`hermes skills list` + `hermes tools list`) and filters out unsupported preferences before the request is sent. The remaining compatible preferences are passed as routing context without failing the turn.
+When `gatewayMode` is `cli` or `auto` and the local Hermes CLI is selected, the plugin probes the host Hermes install (`hermes skills list` + `hermes tools list`) and filters out unsupported preferences before the request is sent. The remaining compatible preferences are passed as routing context without failing the turn. If Hermes returns a real session ID for a new CLI conversation, the plugin now upgrades that thread to durable continuation automatically.

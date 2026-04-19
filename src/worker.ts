@@ -65,6 +65,9 @@ function normalizeConfig(config: Record<string, unknown> | null | undefined): Ma
     allowPrivateAdapterHosts: typeof config?.allowPrivateAdapterHosts === "boolean"
       ? config.allowPrivateAdapterHosts
       : DEFAULT_CONFIG.allowPrivateAdapterHosts,
+    allowInsecureHttpAdapters: typeof config?.allowInsecureHttpAdapters === "boolean"
+      ? config.allowInsecureHttpAdapters
+      : DEFAULT_CONFIG.allowInsecureHttpAdapters,
     gatewayRequestTimeoutMs: numberConfig(config?.gatewayRequestTimeoutMs, DEFAULT_CONFIG.gatewayRequestTimeoutMs, 1_000),
     defaultProfileId: typeof config?.defaultProfileId === "string" && config.defaultProfileId.trim()
       ? config.defaultProfileId.trim()
@@ -131,7 +134,14 @@ function pluginWarnings(config: MasterChatPluginConfig): string[] {
   if (config.allowPrivateAdapterHosts) {
     warnings.push("Private adapter hosts are allowed for direct fetch. Enable this only on trusted internal deployments.");
   }
+  if (config.allowInsecureHttpAdapters) {
+    warnings.push("Non-HTTPS remote adapter URLs are allowed. Enable this only for trusted internal or transitional deployments.");
+  }
   return warnings;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
 }
 
 function isRfc1918Host(hostname: string): boolean {
@@ -171,7 +181,10 @@ function validateConfigShape(config: MasterChatPluginConfig): { ok: boolean; err
           errors.push("hermesBaseUrl must use http or https");
         }
         const hostname = url.hostname.toLowerCase();
-        const isLoopback = hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+        const isLoopback = isLoopbackHost(hostname);
+        if (!isLoopback && url.protocol === "http:" && !config.allowInsecureHttpAdapters) {
+          errors.push("Non-loopback hermesBaseUrl values must use https unless allowInsecureHttpAdapters=true");
+        }
         if (!isLoopback && isRfc1918Host(hostname) && !config.allowPrivateAdapterHosts) {
           errors.push("RFC1918 hermesBaseUrl hosts require allowPrivateAdapterHosts=true");
         }
@@ -240,6 +253,21 @@ function validateConfigInput(rawConfig: Record<string, unknown> | null | undefin
     }
     if (typeof rawConfig?.hermesAuthToken === "string" && !rawConfig.hermesAuthToken.trim()) {
       errors.push("gatewayMode=http requires hermesAuthToken");
+    }
+    if (
+      typeof rawConfig?.hermesBaseUrl === "string"
+      && rawConfig.hermesBaseUrl.trim()
+      && typeof rawConfig?.allowInsecureHttpAdapters !== "boolean"
+    ) {
+      try {
+        const url = new URL(rawConfig.hermesBaseUrl);
+        const hostname = url.hostname.toLowerCase();
+        if (!isLoopbackHost(hostname) && url.protocol === "http:") {
+          errors.push("Non-loopback hermesBaseUrl values must use https unless allowInsecureHttpAdapters=true");
+        }
+      } catch {
+        // handled by normalized validation
+      }
     }
   }
 

@@ -67,6 +67,11 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Allow direct fetch to RFC1918 adapter hosts",
         default: DEFAULT_CONFIG.allowPrivateAdapterHosts,
       },
+      allowInsecureHttpAdapters: {
+        type: "boolean",
+        title: "Allow non-HTTPS remote Hermes adapter URLs",
+        default: DEFAULT_CONFIG.allowInsecureHttpAdapters,
+      },
       gatewayRequestTimeoutMs: {
         type: "number",
         title: "Gateway request timeout (ms)",

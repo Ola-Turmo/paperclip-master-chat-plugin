@@ -25,6 +25,8 @@ If `hermes` is already installed on the host, the plugin can use it directly via
 
 If you expose the bundled adapter on `127.0.0.1`, no extra trusted-host flag is required. Loopback adapter URLs are allowed automatically. Only non-loopback RFC1918/private adapter hosts require `allowPrivateAdapterHosts=true`.
 
+For cross-host adapter deployments, prefer `https://...` URLs. Non-loopback plain HTTP adapter URLs now require `allowInsecureHttpAdapters=true`.
+
 If you want an HTTP boundary while still reusing the same local Hermes install, run the bundled adapter service:
 
 ```bash
@@ -116,6 +118,7 @@ Or, for the bundled local adapter service:
 ```
 
 Only add `allowPrivateAdapterHosts: true` when the adapter lives on a trusted internal RFC1918 address that is not loopback.
+Keep `allowInsecureHttpAdapters: false` unless you are deliberately using a trusted non-loopback adapter over plain HTTP. Remote or cross-host adapters should stay on HTTPS by default.
 
 `pnpm vps:smoke` now rebuilds the repo, refreshes the plugin inside `/root/work/paperclip`, runs a live CLI smoke turn, starts the bundled adapter on a temporary loopback port, and verifies a live HTTP turn through Paperclip too.
 

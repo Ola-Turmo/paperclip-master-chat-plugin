@@ -59,6 +59,7 @@ export const DEFAULT_CONFIG = {
   hermesAuthToken: "",
   hermesAuthHeaderName: "authorization",
   allowPrivateAdapterHosts: false,
+  allowInsecureHttpAdapters: false,
   gatewayRequestTimeoutMs: 45_000,
   defaultProfileId: "paperclip-master",
   defaultProvider: "openrouter",

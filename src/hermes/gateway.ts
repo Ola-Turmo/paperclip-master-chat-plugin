@@ -104,6 +104,34 @@ function isRfc1918Host(hostname: string): boolean {
   return octet >= 16 && octet <= 31;
 }
 
+function assertAllowedHttpAdapterUrl(config: MasterChatPluginConfig): string {
+  if (!config.hermesBaseUrl.trim()) {
+    throw configError("Hermes HTTP gateway mode requires hermesBaseUrl");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(config.hermesBaseUrl);
+  } catch {
+    throw configError("hermesBaseUrl must be a valid absolute URL");
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw configError("hermesBaseUrl must use http or https");
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  const isLoopback = isLoopbackHost(hostname);
+  if (!isLoopback && isRfc1918Host(hostname) && !config.allowPrivateAdapterHosts) {
+    throw configError("RFC1918 hermesBaseUrl hosts require allowPrivateAdapterHosts=true");
+  }
+  if (!isLoopback && url.protocol === "http:" && !config.allowInsecureHttpAdapters) {
+    throw configError("Non-loopback hermesBaseUrl values must use https unless allowInsecureHttpAdapters=true");
+  }
+
+  return config.hermesBaseUrl.replace(/\/$/, "");
+}
+
 export function shouldUseDirectAdapterFetch(rawUrl: string, config: MasterChatPluginConfig): boolean {
   try {
     const url = new URL(rawUrl);
@@ -178,10 +206,16 @@ async function probeCliCommand(config: MasterChatPluginConfig): Promise<boolean>
 
 async function probeHttpGateway(ctx: PluginContext, config: MasterChatPluginConfig): Promise<boolean> {
   if (!config.hermesBaseUrl.trim() || !config.hermesAuthToken.trim()) return false;
+  let baseUrl = "";
+  try {
+    baseUrl = assertAllowedHttpAdapterUrl(config);
+  } catch {
+    return false;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.min(config.gatewayRequestTimeoutMs, 5_000));
   try {
-    const response = await performGatewayFetch(ctx, config, `${config.hermesBaseUrl.replace(/\/$/, "")}/health`, {
+    const response = await performGatewayFetch(ctx, config, `${baseUrl}/health`, {
       method: "GET",
       headers: {
         [config.hermesAuthHeaderName]: authHeaderValue(config),
@@ -199,6 +233,18 @@ async function probeHttpGateway(ctx: PluginContext, config: MasterChatPluginConf
 function parseSessionId(output: string): string | undefined {
   const match = output.match(/session(?:\s+id)?\s*[:=]\s*([a-zA-Z0-9._-]+)/i);
   return match?.[1];
+}
+
+export function resolveCliSessionState(
+  request: HermesRequest,
+  combinedOutput: string,
+): { sessionId: string; continuationMode: HermesContinuationMode } {
+  const parsedSessionId = parseSessionId(combinedOutput);
+  const sessionId = parsedSessionId ?? request.session.sessionId ?? `cli-${request.metadata.threadId}`;
+  return {
+    sessionId,
+    continuationMode: request.session.sessionId || parsedSessionId ? "durable" : "stateless",
+  };
 }
 
 export class MockHermesGateway implements HermesGateway {
@@ -287,14 +333,12 @@ export class HttpHermesGateway implements HermesGateway {
     request: HermesRequest,
     options?: { onEvent?: (event: HermesStreamEvent) => void },
   ): Promise<HermesResponse> {
-    if (!this.config.hermesBaseUrl.trim()) {
-      throw configError("Hermes HTTP gateway mode requires hermesBaseUrl");
-    }
+    const baseUrl = assertAllowedHttpAdapterUrl(this.config);
 
     options?.onEvent?.({
       type: "status",
       stage: "started",
-      message: `Posting request to Hermes adapter at ${this.config.hermesBaseUrl}`,
+      message: `Posting request to Hermes adapter at ${baseUrl}`,
     });
 
     const controller = new AbortController();
@@ -303,7 +347,7 @@ export class HttpHermesGateway implements HermesGateway {
     const body = JSON.stringify(buildHermesGatewayPayload(request));
 
     try {
-      const response = await performGatewayFetch(this.ctx, this.config, `${this.config.hermesBaseUrl.replace(/\/$/, "")}${path}`, {
+      const response = await performGatewayFetch(this.ctx, this.config, `${baseUrl}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -329,14 +373,17 @@ export class HttpHermesGateway implements HermesGateway {
         stage: "completed",
         message: "Hermes adapter response completed",
       });
+      const sessionId = typeof data.sessionId === "string"
+        ? data.sessionId
+        : (request.session.sessionId ?? `http-${request.metadata.threadId}`);
       return {
         assistantText,
         toolTraces: Array.isArray(data.toolTraces) ? data.toolTraces : [],
         provider: typeof data.provider === "string" ? data.provider : request.session.provider,
         model: typeof data.model === "string" ? data.model : request.session.model,
-        sessionId: typeof data.sessionId === "string" ? data.sessionId : (request.session.sessionId ?? `http-${request.metadata.threadId}`),
+        sessionId,
         gatewayMode: "http",
-        continuationMode: (data.continuationMode as HermesContinuationMode | undefined) ?? (request.session.sessionId ? "durable" : "stateless"),
+        continuationMode: (data.continuationMode as HermesContinuationMode | undefined) ?? ((request.session.sessionId || typeof data.sessionId === "string") ? "durable" : "stateless"),
       };
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -409,15 +456,15 @@ export class CliHermesGateway implements HermesGateway {
       message: "Hermes CLI response completed",
     });
 
-    const resumed = Boolean(request.session.sessionId);
+    const sessionState = resolveCliSessionState(request, combinedOutput);
     return {
       assistantText,
       toolTraces: [],
       provider: request.session.provider,
       model: request.session.model,
-      sessionId: parseSessionId(combinedOutput) ?? request.session.sessionId ?? `cli-${request.metadata.threadId}`,
+      sessionId: sessionState.sessionId,
       gatewayMode: "cli",
-      continuationMode: resumed ? "durable" : "stateless",
+      continuationMode: sessionState.continuationMode,
     };
   }
 }
@@ -431,7 +478,7 @@ export async function createHermesGateway(ctx: PluginContext, config: MasterChat
         reason: "configured_cli_mode",
       };
     case "http":
-      if (!config.hermesBaseUrl.trim()) throw configError("gatewayMode=http requires hermesBaseUrl");
+      assertAllowedHttpAdapterUrl(config);
       if (!config.hermesAuthToken.trim()) throw configError("gatewayMode=http requires hermesAuthToken");
       return {
         gateway: new HttpHermesGateway(ctx, config),

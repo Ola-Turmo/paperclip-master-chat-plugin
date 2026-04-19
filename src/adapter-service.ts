@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import type { HermesGatewayPayload, HermesPayloadMessage } from "./hermes/payload.js";
 import { loadHermesCapabilityInventory, sanitizeSkillPolicy } from "./hermes/capabilities.js";
+import type { HermesCapabilityInventory } from "./hermes/capabilities.js";
 import type { HermesContinuationMode, HermesResponse, HermesToolTrace } from "./types.js";
 
 export interface AdapterInvocation {
@@ -135,6 +136,18 @@ export function parseSessionId(output: string): string | undefined {
   return match?.[1];
 }
 
+export function resolveAdapterSessionState(
+  payload: HermesGatewayPayload,
+  output: string,
+): { sessionId: string; continuationMode: HermesContinuationMode } {
+  const parsedSessionId = parseSessionId(output);
+  const sessionId = parsedSessionId ?? payload.session.sessionId ?? `adapter-${payload.metadata.threadId}`;
+  return {
+    sessionId,
+    continuationMode: payload.session.sessionId || parsedSessionId ? "durable" : "stateless",
+  };
+}
+
 function describeContentBlock(block: HermesPayloadMessage["content"][number]): string {
   if (block.type === "text") return block.text?.trim() ?? "";
   return `[Image attachment: ${block.name ?? "unnamed"} (${block.mimeType ?? "unknown"})]`;
@@ -201,7 +214,11 @@ function buildSyntheticToolTraces(payload: HermesGatewayPayload): HermesToolTrac
   return traces;
 }
 
-export async function buildAdapterInvocation(config: AdapterServiceConfig, payload: HermesGatewayPayload): Promise<{
+export async function buildAdapterInvocation(
+  config: AdapterServiceConfig,
+  payload: HermesGatewayPayload,
+  capabilityInventory?: HermesCapabilityInventory,
+): Promise<{
   invocation: AdapterInvocation;
   effectivePayload: HermesGatewayPayload;
   warnings: string[];
@@ -210,7 +227,7 @@ export async function buildAdapterInvocation(config: AdapterServiceConfig, paylo
   let sanitizedSkillPolicy = payload.skillPolicy;
 
   try {
-    const inventory = await loadHermesCapabilityInventory({
+    const inventory = capabilityInventory ?? await loadHermesCapabilityInventory({
       hermesCommand: config.hermesCommand,
       hermesWorkingDirectory: config.hermesWorkingDirectory,
       gatewayRequestTimeoutMs: config.timeoutMs,
@@ -316,15 +333,15 @@ async function runHermesChat(config: AdapterServiceConfig, payload: HermesGatewa
     throw new Error("Hermes adapter returned no assistant text");
   }
 
-  const continuationMode: HermesContinuationMode = effectivePayload.session.sessionId ? "durable" : "stateless";
+  const sessionState = resolveAdapterSessionState(effectivePayload, output);
   return {
     assistantText,
     toolTraces: buildSyntheticToolTraces(effectivePayload),
     provider: effectivePayload.session.provider,
     model: effectivePayload.session.model,
-    sessionId: parseSessionId(output) ?? effectivePayload.session.sessionId ?? `adapter-${payload.metadata.threadId}`,
+    sessionId: sessionState.sessionId,
     gatewayMode: "http",
-    continuationMode,
+    continuationMode: sessionState.continuationMode,
   };
 }
 

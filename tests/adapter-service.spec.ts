@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited, verifySignedRequest } from "../src/adapter-service.js";
+import { buildAdapterInvocation, buildAdapterPrompt, getExpectedAuthValue, isAuthorized, parseSessionId, readJsonLimited, resolveAdapterSessionState, verifySignedRequest } from "../src/adapter-service.js";
+import type { HermesCapabilityInventory } from "../src/hermes/capabilities.js";
 import type { HermesGatewayPayload } from "../src/hermes/payload.js";
 
 function samplePayload(): HermesGatewayPayload {
@@ -111,6 +112,10 @@ describe("adapter service helpers", () => {
   });
 
   it("keeps Hermes capability preferences in the prompt instead of forwarding -s/-t flags", async () => {
+    const inventory: HermesCapabilityInventory = {
+      availableSkills: [],
+      enabledToolsets: ["web", "file"],
+    };
     const invocation = await buildAdapterInvocation({
       port: 8788,
       host: "127.0.0.1",
@@ -124,7 +129,7 @@ describe("adapter service helpers", () => {
       timeoutMs: 45_000,
       maxRequestBodyBytes: 15_000_000,
       maxClockSkewMs: 300_000,
-    }, samplePayload());
+    }, samplePayload(), inventory);
 
     expect(invocation.invocation.args).not.toContain("-s");
     expect(invocation.invocation.args).not.toContain("-t");
@@ -137,6 +142,16 @@ describe("adapter service helpers", () => {
 
   it("parses Hermes session IDs from output", () => {
     expect(parseSessionId("Session ID: sess_abc123")).toBe("sess_abc123");
+  });
+
+  it("treats new adapter sessions as durable when Hermes returns a real session id", () => {
+    const payload = samplePayload();
+    payload.session.sessionId = undefined;
+
+    expect(resolveAdapterSessionState(payload, "session=sess_new123")).toEqual({
+      sessionId: "sess_new123",
+      continuationMode: "durable",
+    });
   });
 
   it("rejects mismatched bearer headers", () => {

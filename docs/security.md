@@ -20,9 +20,11 @@ This plugin follows the current Paperclip alpha plugin model:
 - HTTP adapter mode fails closed unless `hermesAuthToken` is configured
 - the bundled local adapter service requires the configured auth header/token before it will continue sessions
 - the bundled local adapter service compares auth tokens with `timingSafeEqual`, requires timestamped HMAC signature headers, rejects stale/replayed nonces, and rejects oversized request bodies with `413`
+- adapter responses that include a real `sessionId` are treated as durable continuation even if the adapter omits `continuationMode`, which reduces accidental stateless fallbacks in mixed adapter fleets
 - unsupported Hermes capability preferences are filtered before local CLI or adapter requests so host-specific catalogs do not become runtime footguns
 - loopback adapter URLs are treated as trusted-host deployments and use direct Node `fetch` instead of Paperclip's SSRF-guarded `ctx.http.fetch`
 - non-loopback RFC1918/private adapter URLs require `allowPrivateAdapterHosts=true`
+- non-loopback remote adapter URLs must use `https` unless `allowInsecureHttpAdapters=true`
 - config validation rejects invalid HTTP adapter settings before the worker accepts them
 - message text is capped with `maxMessageChars` and enforced in both the UI and worker
 
@@ -33,11 +35,12 @@ This plugin follows the current Paperclip alpha plugin model:
 3. **Prefer `gatewayMode=http` behind an internal adapter service** when you want a stricter process boundary, richer request auditing, or centralized provider policy.
 4. **Treat loopback adapter URLs as a trusted-host feature, not a general remote deployment pattern.** The direct-fetch bypass exists so a same-VPS adapter can work even though Paperclip's guarded HTTP client blocks private ranges by design.
 5. **Enable `allowPrivateAdapterHosts` only when you truly need an RFC1918/private non-loopback adapter URL.** It widens the trusted-network surface intentionally.
-6. **Keep `availablePluginTools` minimal** — default-deny dangerous tools.
-7. **Audit activity** — the worker already writes lightweight activity summaries and failure metrics; extend this in production.
-8. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
-9. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
-10. **Keep the adapter clock sane** — HMAC freshness checks use `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default 5 minutes), so host time drift can cause legitimate requests to fail.
+6. **Keep `allowInsecureHttpAdapters` disabled unless you are deliberately using an internal non-HTTPS adapter.** Public or cross-host adapter traffic should be HTTPS by default.
+7. **Keep `availablePluginTools` minimal** — default-deny dangerous tools.
+8. **Audit activity** — the worker already writes lightweight activity summaries and failure metrics; extend this in production.
+9. **Rate limit upstream of the adapter or Paperclip host** — this repo exposes clear integration seams, but infra-level quotas still belong in the deployment.
+10. **Keep adapter default env aligned with plugin defaults** (`MASTER_CHAT_ADAPTER_DEFAULT_PROFILE/PROVIDER/MODEL`) when you reuse the same Hermes host install through HTTP mode.
+11. **Keep the adapter clock sane** — HMAC freshness checks use `MASTER_CHAT_ADAPTER_MAX_CLOCK_SKEW_MS` (default 5 minutes), so host time drift can cause legitimate requests to fail.
 
 ## Current runtime caveats
 

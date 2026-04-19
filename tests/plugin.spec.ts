@@ -65,7 +65,7 @@ describe("master chat plugin", () => {
   });
 
   it("does not duplicate the user turn when retrying a failed assistant response", async () => {
-    const harness = createTestHarness({ manifest, config: { gatewayMode: "http", hermesBaseUrl: "http://adapter.invalid", hermesAuthToken: "" } });
+    const harness = createTestHarness({ manifest, config: { gatewayMode: "http", hermesBaseUrl: "http://127.0.0.1:8788", hermesAuthToken: "" } });
     seedHarness(harness);
 
     await plugin.definition.setup(harness.ctx);
@@ -118,12 +118,12 @@ describe("master chat plugin", () => {
 
     harness.setConfig({
       gatewayMode: "http",
-      hermesBaseUrl: "http://adapter.invalid",
+      hermesBaseUrl: "http://127.0.0.1:8788",
       hermesAuthToken: "",
     });
     await plugin.definition.onConfigChanged?.({
       gatewayMode: "http",
-      hermesBaseUrl: "http://adapter.invalid",
+      hermesBaseUrl: "http://127.0.0.1:8788",
       hermesAuthToken: "",
     });
 
@@ -137,7 +137,7 @@ describe("master chat plugin", () => {
     })).rejects.toThrow(/hermesAuthToken/i);
   });
 
-  it("validates risky RFC1918 adapter configs and enforces a text length limit", async () => {
+  it("validates risky adapter configs and enforces a text length limit", async () => {
     const harness = createTestHarness({ manifest, config: { gatewayMode: "mock" } });
     seedHarness(harness);
 
@@ -153,6 +153,15 @@ describe("master chat plugin", () => {
 
     expect(invalidConfig?.ok).toBe(false);
     expect(invalidConfig?.errors?.some((entry) => /allowPrivateAdapterHosts/i.test(entry))).toBe(true);
+
+    const insecureRemote = await plugin.definition.onValidateConfig?.({
+      gatewayMode: "http",
+      hermesBaseUrl: "http://adapter.example.com",
+      hermesAuthToken: "secret-token",
+      hermesAuthHeaderName: "authorization",
+    });
+    expect(insecureRemote?.ok).toBe(false);
+    expect(insecureRemote?.errors?.some((entry) => /https/i.test(entry))).toBe(true);
 
     harness.setConfig({
       gatewayMode: "mock",

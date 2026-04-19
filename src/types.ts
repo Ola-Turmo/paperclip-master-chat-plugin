@@ -192,6 +192,7 @@ export interface MasterChatPluginConfig {
   hermesAuthToken: string;
   hermesAuthHeaderName: string;
   allowPrivateAdapterHosts: boolean;
+  allowInsecureHttpAdapters: boolean;
   gatewayRequestTimeoutMs: number;
   defaultProfileId: string;
   defaultProvider: string;
