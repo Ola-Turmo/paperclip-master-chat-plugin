@@ -1,5 +1,5 @@
 export const PLUGIN_ID = "paperclip-master-chat-plugin";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 export const PAGE_ROUTE = "master-chat";
 
 export const SLOT_IDS = {
@@ -7,6 +7,7 @@ export const SLOT_IDS = {
   sidebar: "master-chat-sidebar",
   dashboardWidget: "master-chat-dashboard-widget",
   issueTab: "master-chat-issue-tab",
+  toolbarButton: "master-chat-toolbar-button",
 } as const;
 
 export const EXPORT_NAMES = {
@@ -14,6 +15,8 @@ export const EXPORT_NAMES = {
   sidebar: "MasterChatSidebar",
   dashboardWidget: "MasterChatDashboardWidget",
   issueTab: "MasterChatIssueTab",
+  toolbarButton: "MasterChatToolbarButton",
+  launcherModal: "MasterChatLauncherModal",
 } as const;
 
 export const DATA_KEYS = {

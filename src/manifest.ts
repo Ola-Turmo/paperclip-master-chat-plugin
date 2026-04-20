@@ -23,6 +23,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "ui.sidebar.register",
     "ui.dashboardWidget.register",
     "ui.detailTab.register",
+    "ui.action.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -210,6 +211,28 @@ const manifest: PaperclipPluginManifestV1 = {
         displayName: "Master Chat",
         exportName: EXPORT_NAMES.issueTab,
         entityTypes: ["issue"],
+      },
+      {
+        type: "toolbarButton",
+        id: SLOT_IDS.toolbarButton,
+        displayName: "Master Chat",
+        exportName: EXPORT_NAMES.toolbarButton,
+        entityTypes: ["project", "issue"],
+      },
+    ],
+    launchers: [
+      {
+        id: "master-chat-launcher",
+        displayName: "Master Chat",
+        placementZone: "toolbarButton",
+        action: {
+          type: "openModal",
+          target: EXPORT_NAMES.launcherModal,
+        },
+        render: {
+          environment: "hostOverlay",
+          bounds: "wide",
+        },
       },
     ],
   },

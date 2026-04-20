@@ -1,6 +1,6 @@
 {
   "name": "paperclip-master-chat-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Plugin-owned master chat surface for Paperclip mediated by Hermes",
   "scripts": {

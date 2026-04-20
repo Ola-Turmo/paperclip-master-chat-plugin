@@ -43,6 +43,11 @@ const textAreaStyle: CSSProperties = { ...inputStyle, minHeight: "110px", resize
 const chipStyle: CSSProperties = { display: "inline-flex", gap: "6px", alignItems: "center", borderRadius: "999px", border: "1px solid var(--border)", padding: "4px 10px", fontSize: "12px" };
 const warningStyle: CSSProperties = { ...cardStyle, borderColor: "#f59e0b", background: "color-mix(in srgb, #f59e0b 10%, transparent)" };
 const errorStyle: CSSProperties = { ...cardStyle, borderColor: "#dc2626", background: "color-mix(in srgb, #dc2626 10%, transparent)" };
+const accentCardStyle: CSSProperties = {
+  ...cardStyle,
+  borderColor: "color-mix(in srgb, #2563eb 45%, var(--border))",
+  background: "linear-gradient(135deg, color-mix(in srgb, #2563eb 18%, transparent), color-mix(in srgb, #0f172a 4%, transparent))",
+};
 
 function hostPath(companyPrefix: string | null | undefined, suffix: string): string {
   return companyPrefix ? `/${companyPrefix}${suffix}` : suffix;
@@ -658,10 +663,14 @@ export function MasterChatIssueTab(_props: PluginDetailTabProps) {
 
 export function MasterChatSidebar(_props: PluginSidebarProps) {
   const host = useHostContext();
+  const companyId = host.companyId ?? "";
+  const bootstrap = usePluginData<BootstrapData>(DATA_KEYS.bootstrap, companyId ? { companyId } : undefined);
+  const threadCount = bootstrap.data?.threads.length ?? 0;
   return (
-    <a href={pluginRoute(host.companyPrefix)} style={{ ...cardStyle, display: "grid", gap: "6px", textDecoration: "none", color: "inherit" }}>
-      <strong>Master Chat</strong>
-      <span style={mutedStyle}>Open the Hermes-mediated chat surface for this company.</span>
+    <a href={pluginRoute(host.companyPrefix)} style={{ ...accentCardStyle, display: "grid", gap: "8px", textDecoration: "none", color: "inherit" }}>
+      <strong>CEO Master Chat</strong>
+      <span style={mutedStyle}>Primary operator console for this company. Open Hermes chat, review active threads, and steer execution fast.</span>
+      {companyId ? <span style={chipStyle}>{threadCount} active threads</span> : <span style={chipStyle}>Open from a company</span>}
     </a>
   );
 }
@@ -676,14 +685,61 @@ export function MasterChatDashboardWidget(_props: PluginWidgetProps) {
   if (bootstrap.error) return <div style={errorStyle}>Master Chat error: {bootstrap.error.message}</div>;
 
   return (
-    <div style={{ ...cardStyle, display: "grid", gap: "10px" }}>
-      <strong>Master Chat</strong>
-      <div style={mutedStyle}>Active threads: {bootstrap.data?.threads.length ?? 0}</div>
-      <div style={mutedStyle}>Default skills: {(bootstrap.data?.defaults.skills.enabled ?? []).join(", ")}</div>
+    <div style={{ ...accentCardStyle, display: "grid", gap: "12px" }}>
+      <strong>CEO Master Chat</strong>
+      <div style={mutedStyle}>Fastest way to talk to the company control plane, scope the discussion, and move from question to action.</div>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <span style={chipStyle}>{bootstrap.data?.threads.length ?? 0} active threads</span>
+        <span style={chipStyle}>{bootstrap.data?.agents.length ?? 0} available agents</span>
+      </div>
+      {bootstrap.data?.threads?.length ? (
+        <div style={{ display: "grid", gap: "6px" }}>
+          {bootstrap.data.threads.slice(0, 3).map((thread) => (
+            <div key={thread.threadId} style={{ ...cardStyle, padding: "10px" }}>
+              <strong style={{ fontSize: "13px" }}>{thread.title}</strong>
+              <div style={mutedStyle}>{thread.scopeLabel}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div style={mutedStyle}>Default skills: {(bootstrap.data?.defaults.skills.enabled ?? []).join(", ") || "none"}</div>
       {bootstrap.data?.warnings?.length ? <div style={mutedStyle}>Warnings: {bootstrap.data.warnings.length}</div> : null}
       <a href={pluginRoute(host.companyPrefix)} style={{ ...primaryButtonStyle, textAlign: "center", textDecoration: "none" }}>
-        Open Master Chat
+        Open CEO Master Chat
       </a>
+    </div>
+  );
+}
+
+export function MasterChatToolbarButton() {
+  const host = useHostContext();
+  return (
+    <a
+      href={pluginRoute(host.companyPrefix)}
+      style={{ ...primaryButtonStyle, textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+    >
+      Master Chat
+    </a>
+  );
+}
+
+export function MasterChatLauncherModal() {
+  const host = useHostContext();
+  return (
+    <div style={{ display: "grid", gap: "12px" }}>
+      <div style={accentCardStyle}>
+        <strong>CEO Master Chat</strong>
+        <div style={{ ...mutedStyle, marginTop: "8px" }}>
+          This is the fastest way into the Hermes-mediated operator surface. Open the full chat to scope work across company, project, issue, and agent context.
+        </div>
+      </div>
+      <a
+        href={pluginRoute(host.companyPrefix)}
+        style={{ ...primaryButtonStyle, textDecoration: "none", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+      >
+        Open full Master Chat
+      </a>
+      <ChatSurface forcedIssueId={host.entityType === "issue" ? host.entityId ?? undefined : undefined} />
     </div>
   );
 }
