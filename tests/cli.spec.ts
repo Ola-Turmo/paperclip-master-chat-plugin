@@ -17,10 +17,10 @@ function sampleRequest(): HermesRequest {
   return {
     requestId: "req_1",
     session: {
-      profileId: "paperclip-master",
+      profileId: "default",
       sessionId: "sess_1",
-      model: "anthropic/claude-sonnet-4",
-      provider: "openrouter",
+      model: "MiniMax-M2.7",
+      provider: "minimax",
       continuationMode: "durable",
     },
     scope: {
@@ -138,7 +138,7 @@ describe("Hermes CLI helpers", () => {
     expect(invocation.command).toBe("hermes");
     expect(invocation.cwd).toBe("/root/hermes-agent");
     expect(invocation.args).toContain("-p");
-    expect(invocation.args).toContain("paperclip-master");
+    expect(invocation.args).toContain("default");
     expect(invocation.args).toContain("-Q");
     expect(invocation.args).toContain("--resume");
     expect(invocation.args).toContain("sess_1");
