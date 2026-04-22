@@ -20,8 +20,8 @@ type CacheEntry = {
 const CACHE_TTL_MS = 60_000;
 const capabilityCache = new Map<string, CacheEntry>();
 
-function cacheKey(config: MasterChatPluginConfig | { hermesCommand: string; hermesWorkingDirectory?: string }): string {
-  return `${config.hermesCommand}::${config.hermesWorkingDirectory ?? ""}`;
+function cacheKey(config: MasterChatPluginConfig | { hermesCommand: string; hermesCommandArgs?: string[]; hermesWorkingDirectory?: string }): string {
+  return `${config.hermesCommand}::${(config.hermesCommandArgs ?? []).join(" ")}::${config.hermesWorkingDirectory ?? ""}`;
 }
 
 function stripAnsi(input: string): string {
@@ -29,12 +29,12 @@ function stripAnsi(input: string): string {
 }
 
 async function runHermesCommand(
-  config: MasterChatPluginConfig | { hermesCommand: string; hermesWorkingDirectory?: string },
+  config: MasterChatPluginConfig | { hermesCommand: string; hermesCommandArgs?: string[]; hermesWorkingDirectory?: string },
   args: string[],
   timeoutMs: number,
 ): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(config.hermesCommand, args, {
+    const child = spawn(config.hermesCommand, [...(config.hermesCommandArgs ?? []), ...args], {
       cwd: config.hermesWorkingDirectory || undefined,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -94,7 +94,7 @@ export function parseHermesToolsList(output: string): string[] {
 }
 
 export async function loadHermesCapabilityInventory(
-  config: MasterChatPluginConfig | { hermesCommand: string; hermesWorkingDirectory?: string; gatewayRequestTimeoutMs?: number },
+  config: MasterChatPluginConfig | { hermesCommand: string; hermesCommandArgs?: string[]; hermesWorkingDirectory?: string; gatewayRequestTimeoutMs?: number },
 ): Promise<HermesCapabilityInventory> {
   const key = cacheKey(config);
   const now = Date.now();

@@ -9,6 +9,7 @@ function buildConfig(overrides: Partial<MasterChatPluginConfig> = {}): MasterCha
     defaultEnabledSkills: [...DEFAULT_CONFIG.defaultEnabledSkills],
     defaultToolsets: [...DEFAULT_CONFIG.defaultToolsets],
     availablePluginTools: [...DEFAULT_CONFIG.availablePluginTools],
+    hermesCommandArgs: [...DEFAULT_CONFIG.hermesCommandArgs],
     ...overrides,
   };
 }
@@ -128,6 +129,7 @@ describe("Hermes CLI helpers", () => {
   it("builds a CLI invocation that resumes durable Hermes sessions", () => {
     const config = buildConfig({
       hermesCommand: "hermes",
+      hermesCommandArgs: [],
       hermesWorkingDirectory: "/root/hermes-agent",
       defaultEnabledSkills: ["paperclip-search"],
       defaultToolsets: ["web"],
@@ -156,6 +158,7 @@ describe("Hermes CLI helpers", () => {
     request.session.model = "claude-4.5-sonnet";
     const config = buildConfig({
       hermesCommand: "hermes",
+      hermesCommandArgs: [],
       hermesWorkingDirectory: "/root/hermes-agent",
       defaultEnabledSkills: ["paperclip-search"],
       defaultToolsets: ["web"],
@@ -167,5 +170,19 @@ describe("Hermes CLI helpers", () => {
     expect(invocation.args).toContain("anthropic");
     expect(invocation.args).toContain("-m");
     expect(invocation.args).toContain("claude-4.5-sonnet");
+  });
+
+  it("supports launching Hermes through an explicit interpreter plus script path", () => {
+    const config = buildConfig({
+      hermesCommand: "/root/.hermes/hermes-agent/venv/bin/python",
+      hermesCommandArgs: ["/root/.hermes/hermes-agent/hermes"],
+      hermesWorkingDirectory: "/root/.hermes/hermes-agent",
+    });
+
+    const invocation = buildHermesCliInvocation(sampleRequest(), config);
+    expect(invocation.command).toBe("/root/.hermes/hermes-agent/venv/bin/python");
+    expect(invocation.args[0]).toBe("/root/.hermes/hermes-agent/hermes");
+    expect(invocation.args).toContain("chat");
+    expect(invocation.args).toContain("--resume");
   });
 });

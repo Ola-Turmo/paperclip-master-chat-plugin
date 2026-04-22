@@ -92,6 +92,7 @@ export function buildHermesCliInvocation(
   config: MasterChatPluginConfig,
 ): HermesCliInvocation {
   const args = [
+    ...config.hermesCommandArgs,
     "-p",
     request.session.profileId || config.defaultProfileId,
     "chat",

@@ -20,6 +20,7 @@ export interface AdapterServiceConfig {
   port: number;
   host: string;
   hermesCommand: string;
+  hermesCommandArgs?: string[];
   hermesWorkingDirectory?: string;
   defaultProfileId?: string;
   defaultProvider?: string;
@@ -40,11 +41,29 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function envStringArray(name: string): string[] {
+  const value = process.env[name];
+  if (!value?.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+    }
+  } catch {
+    // Fall back to whitespace splitting for simpler ops usage.
+  }
+  return value
+    .split(/\s+/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 export function loadAdapterServiceConfig(): AdapterServiceConfig {
   return {
     port: envNumber("MASTER_CHAT_ADAPTER_PORT", 8788),
     host: process.env.MASTER_CHAT_ADAPTER_HOST || "127.0.0.1",
     hermesCommand: process.env.MASTER_CHAT_HERMES_COMMAND || "hermes",
+    hermesCommandArgs: envStringArray("MASTER_CHAT_HERMES_COMMAND_ARGS"),
     hermesWorkingDirectory: process.env.MASTER_CHAT_HERMES_CWD || "",
     defaultProfileId: process.env.MASTER_CHAT_ADAPTER_DEFAULT_PROFILE || "",
     defaultProvider: process.env.MASTER_CHAT_ADAPTER_DEFAULT_PROVIDER || "",
@@ -290,6 +309,7 @@ export async function buildAdapterInvocation(
   try {
     const inventory = capabilityInventory ?? await loadHermesCapabilityInventory({
       hermesCommand: config.hermesCommand,
+      hermesCommandArgs: config.hermesCommandArgs,
       hermesWorkingDirectory: config.hermesWorkingDirectory,
       gatewayRequestTimeoutMs: config.timeoutMs,
     });
@@ -309,6 +329,7 @@ export async function buildAdapterInvocation(
 
   const prompt = buildAdapterPrompt(effectivePayload, sanitizedWarnings);
   const args = [
+    ...(config.hermesCommandArgs ?? []),
     "-p",
     effectivePayload.session.profileId || config.defaultProfileId || "default",
     "chat",

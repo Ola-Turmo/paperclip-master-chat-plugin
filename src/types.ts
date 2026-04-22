@@ -209,6 +209,7 @@ export interface MasterChatPluginConfig {
   attachmentStorageDirectory: string;
   hermesBaseUrl: string;
   hermesCommand: string;
+  hermesCommandArgs: string[];
   hermesWorkingDirectory?: string;
   hermesAuthToken: string;
   hermesAuthHeaderName: string;

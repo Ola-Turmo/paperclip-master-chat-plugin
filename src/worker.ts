@@ -67,6 +67,7 @@ function normalizeConfig(config: Record<string, unknown> | null | undefined): Ma
       : DEFAULT_CONFIG.attachmentStorageDirectory,
     hermesBaseUrl: typeof config?.hermesBaseUrl === "string" ? config.hermesBaseUrl.trim() : DEFAULT_CONFIG.hermesBaseUrl,
     hermesCommand: typeof config?.hermesCommand === "string" ? config.hermesCommand.trim() : DEFAULT_CONFIG.hermesCommand,
+    hermesCommandArgs: stringArray(config?.hermesCommandArgs, [...DEFAULT_CONFIG.hermesCommandArgs]),
     hermesWorkingDirectory: typeof config?.hermesWorkingDirectory === "string" ? config.hermesWorkingDirectory.trim() : DEFAULT_CONFIG.hermesWorkingDirectory,
     hermesAuthToken: typeof config?.hermesAuthToken === "string" ? config.hermesAuthToken.trim() : DEFAULT_CONFIG.hermesAuthToken,
     hermesAuthHeaderName: typeof config?.hermesAuthHeaderName === "string" && config.hermesAuthHeaderName.trim()
@@ -789,27 +790,35 @@ async function performAssistantTurn(input: {
     await saveStore(ctx, companyId, store);
 
     const latencyMs = Date.now() - startedAt;
-    await ctx.metrics.write("master_chat.send", 1, {
-      provider: response.provider,
-      model: response.model,
-      gatewayMode: response.gatewayMode,
-      continuationMode: response.continuationMode,
-      latencyMs: String(latencyMs),
-    });
+    try {
+      await ctx.metrics.write("master_chat.send", 1, {
+        provider: response.provider,
+        model: response.model,
+        gatewayMode: response.gatewayMode,
+        continuationMode: response.continuationMode,
+        latencyMs: String(latencyMs),
+      });
+    } catch {
+      // Metrics should not block chat delivery.
+    }
 
     if (config.enableActivityLogging) {
-      await ctx.activity.log({
-        companyId,
-        message: `Master Chat completed a reply for thread ${thread.threadId}`,
-        metadata: {
-          threadId: thread.threadId,
-          requestId,
-          gatewayMode: response.gatewayMode,
-          projectId: thread.scope.projectId,
-          linkedIssueId: thread.scope.linkedIssueId,
-          selectedAgentIds: thread.scope.selectedAgentIds,
-        },
-      });
+      try {
+        await ctx.activity.log({
+          companyId,
+          message: `Master Chat completed a reply for thread ${thread.threadId}`,
+          metadata: {
+            threadId: thread.threadId,
+            requestId,
+            gatewayMode: response.gatewayMode,
+            projectId: thread.scope.projectId,
+            linkedIssueId: thread.scope.linkedIssueId,
+            selectedAgentIds: thread.scope.selectedAgentIds,
+          },
+        });
+      } catch {
+        // Activity logging is best-effort and should not break the reply path.
+      }
     }
 
     return {
@@ -844,11 +853,15 @@ async function performAssistantTurn(input: {
       },
     }));
     await saveStore(ctx, companyId, store);
-    await ctx.metrics.write("master_chat.error", 1, {
-      stage: "send",
-      gatewayMode: selection,
-      code: failure.code,
-    });
+    try {
+      await ctx.metrics.write("master_chat.error", 1, {
+        stage: "send",
+        gatewayMode: selection,
+        code: failure.code,
+      });
+    } catch {
+      // Metrics should not mask the primary chat failure.
+    }
     throw failure;
   } finally {
     try {

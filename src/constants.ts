@@ -60,6 +60,7 @@ export const DEFAULT_CONFIG = {
   attachmentStorageDirectory: ".paperclip-master-chat-attachments",
   hermesBaseUrl: "",
   hermesCommand: "hermes",
+  hermesCommandArgs: [],
   hermesWorkingDirectory: "",
   hermesAuthToken: "",
   hermesAuthHeaderName: "authorization",

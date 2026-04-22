@@ -15,6 +15,7 @@ function buildConfig(overrides: Partial<MasterChatPluginConfig> = {}): MasterCha
   return {
     ...DEFAULT_CONFIG,
     ...overrides,
+    hermesCommandArgs: [...(overrides.hermesCommandArgs ?? DEFAULT_CONFIG.hermesCommandArgs)],
     defaultEnabledSkills: [...(overrides.defaultEnabledSkills ?? DEFAULT_CONFIG.defaultEnabledSkills)],
     defaultToolsets: [...(overrides.defaultToolsets ?? DEFAULT_CONFIG.defaultToolsets)],
     availablePluginTools: [...(overrides.availablePluginTools ?? DEFAULT_CONFIG.availablePluginTools)],

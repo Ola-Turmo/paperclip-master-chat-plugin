@@ -9,6 +9,7 @@ import type { ChatMessage, MasterChatPluginConfig } from "../src/types.js";
 function buildConfig(overrides: Partial<MasterChatPluginConfig> = {}): MasterChatPluginConfig {
   return {
     ...DEFAULT_CONFIG,
+    hermesCommandArgs: [...DEFAULT_CONFIG.hermesCommandArgs],
     defaultEnabledSkills: [...DEFAULT_CONFIG.defaultEnabledSkills],
     defaultToolsets: [...DEFAULT_CONFIG.defaultToolsets],
     availablePluginTools: [...DEFAULT_CONFIG.availablePluginTools],

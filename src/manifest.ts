@@ -59,6 +59,12 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Local Hermes CLI command",
         default: DEFAULT_CONFIG.hermesCommand,
       },
+      hermesCommandArgs: {
+        type: "array",
+        title: "Additional Hermes CLI command arguments",
+        items: { type: "string" },
+        default: DEFAULT_CONFIG.hermesCommandArgs,
+      },
       hermesWorkingDirectory: {
         type: "string",
         title: "Optional local Hermes working directory",
